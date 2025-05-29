@@ -69,7 +69,10 @@ def fuzzy_match_players(text, max_results=5):
     """Fuzzy match player names in text and return top matches"""
     from difflib import SequenceMatcher
     
+    print(f"🔍 FUZZY MATCH DEBUG: Starting fuzzy match for text: '{text}'")
+    
     if not players_data:
+        print("🔍 FUZZY MATCH DEBUG: No players data available")
         return []
     
     matches = []
@@ -79,6 +82,8 @@ def fuzzy_match_players(text, max_results=5):
     words = re.findall(r'\b[A-Za-z]+\b', text)
     search_terms = []
     
+    print(f"🔍 FUZZY MATCH DEBUG: Extracted words: {words}")
+    
     # Create search terms from consecutive words
     for i in range(len(words)):
         for j in range(i + 1, min(i + 4, len(words) + 1)):  # Up to 3-word combinations
@@ -86,6 +91,8 @@ def fuzzy_match_players(text, max_results=5):
     
     # Also add individual words
     search_terms.extend(words)
+    
+    print(f"🔍 FUZZY MATCH DEBUG: Search terms: {search_terms}")
     
     # Score each player against search terms
     for player in players_data:
@@ -98,10 +105,17 @@ def fuzzy_match_players(text, max_results=5):
             name_score = SequenceMatcher(None, term.lower(), player_name).ratio()
             uuid_score = SequenceMatcher(None, term.lower(), player_uuid[:8]).ratio()  # First 8 chars of UUID
             best_score = max(best_score, name_score, uuid_score)
+            
+            # Debug high scores
+            if name_score > 0.3 or uuid_score > 0.3:
+                print(f"🔍 FUZZY MATCH DEBUG: '{term}' vs '{player_name}' = {name_score:.3f}")
         
         # Only include if similarity is above threshold
         if best_score > 0.4:  # Lowered from 0.6 to catch more matches
             matches.append((player, best_score))
+            print(f"🔍 FUZZY MATCH DEBUG: MATCH FOUND - {player['name']} (score: {best_score:.3f})")
+    
+    print(f"🔍 FUZZY MATCH DEBUG: Found {len(matches)} total matches before deduplication")
     
     # Sort by score and remove duplicates by UUID
     matches.sort(key=lambda x: x[1], reverse=True)
@@ -115,6 +129,7 @@ def fuzzy_match_players(text, max_results=5):
             if len(unique_matches) >= max_results:
                 break
     
+    print(f"🔍 FUZZY MATCH DEBUG: Returning {len(unique_matches)} unique matches")
     return unique_matches
 
 def contains_banned_word(text):
@@ -162,6 +177,22 @@ def contains_url(text):
 
 def check_player_mentioned(text):
     """Check if any player from the list is mentioned in the text using fuzzy matching"""
+    print(f"🔍 CHECK PLAYER DEBUG: Looking for players in: '{text}'")
+    
+    # First, do a simple direct search for debugging
+    text_lower = text.lower()
+    direct_matches = []
+    for player in players_data:
+        if player['name'].lower() in text_lower:
+            direct_matches.append(player)
+            print(f"🔍 CHECK PLAYER DEBUG: DIRECT MATCH found: {player['name']}")
+    
+    if direct_matches:
+        print(f"🔍 CHECK PLAYER DEBUG: Found {len(direct_matches)} direct matches, returning them")
+        return direct_matches
+    
+    # If no direct matches, try fuzzy matching
+    print(f"🔍 CHECK PLAYER DEBUG: No direct matches, trying fuzzy matching...")
     matches = fuzzy_match_players(text, max_results=5)
     return matches if matches else None
 
@@ -306,13 +337,33 @@ async def on_ready():
     print(f"✅ Player list loaded: {len(players_data)} players")
     if players_data:
         print(f"🔍 Sample players: {[p['name'] for p in players_data[:3]]}")
+        
+        # Test search for Joe Ryan specifically
+        joe_ryan_found = False
+        for player in players_data:
+            if "joe ryan" in player['name'].lower():
+                print(f"🎯 FOUND JOE RYAN: {player['name']} - {player['team']}")
+                joe_ryan_found = True
+                break
+        
+        if not joe_ryan_found:
+            print("❌ JOE RYAN NOT FOUND in players database!")
+            # Show some Ryan players for debugging
+            ryan_players = [p for p in players_data if "ryan" in p['name'].lower()]
+            if ryan_players:
+                print(f"🔍 Found {len(ryan_players)} players with 'Ryan' in name:")
+                for rp in ryan_players[:5]:
+                    print(f"   - {rp['name']} ({rp['team']})")
+    else:
+        print("❌ NO PLAYERS DATA LOADED AT ALL!")
     
     print(f"✅ Bot is ready and listening for messages")
 
 # -------- PREFIX COMMAND: !ask --------
 @bot.command(name="ask")
 async def ask_question(ctx, *, question: str = None):
-    print(f"🎯 !ask command triggered in #{ctx.channel.name}")
+    print(f"🚨 COMMAND HANDLER STARTED - !ask command in #{ctx.channel.name}")
+    print(f"🔍 Question: {question}")
     print(f"🔍 Bot permissions in channel: {ctx.channel.permissions_for(ctx.guild.me)}")
     print(f"🔍 Can manage messages: {ctx.channel.permissions_for(ctx.guild.me).manage_messages}")
     
@@ -405,12 +456,16 @@ async def ask_question(ctx, *, question: str = None):
         return
 
     # Check for player names and fuzzy matching
-    print(f"🔍 Checking for player mentions in: {question}")
+    print(f"🔍 STARTING FUZZY MATCHING for: {question}")
     print(f"🔍 Total players in database: {len(players_data)}")
     if players_data:
         print(f"🔍 Sample player names: {[p.get('name', 'NO_NAME') for p in players_data[:3]]}")
+    else:
+        print("❌ NO PLAYERS DATA LOADED!")
     
     matched_players = check_player_mentioned(question)
+    print(f"🔍 Fuzzy matching returned: {matched_players}")
+    
     if matched_players:
         print(f"🎯 Found {len(matched_players)} potential player matches")
         for player in matched_players:
@@ -443,6 +498,7 @@ async def ask_question(ctx, *, question: str = None):
                     error_msg = await ctx.send("This player has been asked about recently, please be patient and wait for an answer.")
                 
                 await error_msg.delete(delay=8)
+                print("🚨 COMMAND HANDLER FINISHED - BLOCKED RECENT MENTION")
                 return
             
             # Multiple players with recent mentions - show selection dialog
@@ -483,6 +539,7 @@ async def ask_question(ctx, *, question: str = None):
                 # Set up timeout
                 asyncio.create_task(handle_selection_timeout(ctx.author.id, ctx))
                 
+                print("🚨 COMMAND HANDLER FINISHED - SHOWING SELECTION")
                 return
         
         # No recent mentions found - continue with normal processing
@@ -531,6 +588,8 @@ async def ask_question(ctx, *, question: str = None):
         print(f"❌ Could not find #{ANSWERING_CHANNEL}")
         error_msg = await ctx.send(f"❌ Could not find #{ANSWERING_CHANNEL}")
         await error_msg.delete(delay=5)
+        
+    print("🚨 COMMAND HANDLER FINISHED - NORMAL PROCESSING")
 
 # -------- MESSAGE LISTENER --------
 @bot.event
@@ -542,10 +601,10 @@ async def on_message(message):
 
     # Handle submission channel - block non-commands only
     if message.channel.name == SUBMISSION_CHANNEL:
-        # Allow !ask commands to be processed by command handler
+        # For !ask commands, let Discord.py handle them naturally - don't interfere
         if message.content.startswith("!ask"):
-            print("📝 !ask command detected - letting command handler process it")
-            await bot.process_commands(message)
+            print("📝 !ask command detected - Discord.py will process it naturally")
+            await bot.process_commands(message)  # Process the command
             return
         else:
             # Block everything else: regular text, emojis, server emotes, attachments, etc.
@@ -566,7 +625,7 @@ async def on_message(message):
             return
 
     # Handle expert answers (only in answering channel)
-    if message.channel.name == ANSWERING_CHANNEL and message.reference:
+    elif message.channel.name == ANSWERING_CHANNEL and message.reference:
         print(f"🔍 Checking for referenced message in {ANSWERING_CHANNEL}")
         referenced = message.reference.resolved
         if referenced and referenced.id in question_map:
@@ -624,9 +683,9 @@ async def on_message(message):
                 print(f"❌ Could not find #{FINAL_ANSWER_CHANNEL}")
         else:
             print("❌ No matching question found in question_map")
-
-    # Process commands for other channels
-    if message.channel.name not in [SUBMISSION_CHANNEL, ANSWERING_CHANNEL]:
+    
+    # For all other channels, process commands normally
+    else:
         await bot.process_commands(message)
 
 # -------- REACTION HANDLER FOR PLAYER SELECTION --------
