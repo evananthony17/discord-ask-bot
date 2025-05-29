@@ -225,6 +225,10 @@ def check_player_mentioned(text):
     """Check if any player from the list is mentioned in the text using IMPROVED fuzzy matching"""
     print(f"🔍 CHECK PLAYER DEBUG: Looking for players in: '{text}'")
     
+    if not players_data:
+        print("🔍 CHECK PLAYER DEBUG: No players data available")
+        return None
+    
     # First, do a simple direct search for debugging
     text_lower = text.lower()
     direct_matches = []
@@ -233,6 +237,8 @@ def check_player_mentioned(text):
         if player_name_lower in text_lower:
             direct_matches.append(player)
             print(f"🔍 CHECK PLAYER DEBUG: DIRECT MATCH found: {player['name']} ({player['team']})")
+    
+    print(f"🔍 CHECK PLAYER DEBUG: Found {len(direct_matches)} total direct matches")
     
     # Remove duplicates by name from direct matches
     if direct_matches:
@@ -247,14 +253,25 @@ def check_player_mentioned(text):
             else:
                 print(f"🔍 CHECK PLAYER DEBUG: Skipped duplicate direct match - {player['name']} ({player['team']})")
         
+        print(f"🔍 CHECK PLAYER DEBUG: After deduplication: {len(unique_direct)} unique matches")
+        
         if unique_direct:
             print(f"🔍 CHECK PLAYER DEBUG: Returning {len(unique_direct)} direct matches")
             return unique_direct
+        else:
+            print("🔍 CHECK PLAYER DEBUG: No unique direct matches after deduplication!")
+    
+    print("🔍 CHECK PLAYER DEBUG: No direct matches, trying fuzzy matching...")
     
     # If no direct matches, try fuzzy matching
-    print(f"🔍 CHECK PLAYER DEBUG: No direct matches, trying fuzzy matching...")
     matches = fuzzy_match_players(text, max_results=5)
-    return matches if matches else None
+    
+    if matches:
+        print(f"🔍 CHECK PLAYER DEBUG: Fuzzy matching found {len(matches)} matches")
+        return matches
+    
+    print("🔍 CHECK PLAYER DEBUG: No matches found at all")
+    return None
 
 async def check_recent_player_mentions(guild, players_to_check):
     """Check if any of the players were mentioned in the last X hours in answering or final channels"""
@@ -389,46 +406,51 @@ async def handle_selection_timeout(user_id, ctx):
 # -------- EVENTS --------
 @bot.event
 async def on_ready():
-    print("🔥🔥🔥 BOT IS STARTING UP - THIS SHOULD BE VISIBLE 🔥🔥🔥")
-    print(f"✅ Logged in as {bot.user}")
-    
-    # Print timing configuration
-    print(f"⚙️ Timing Config:")
-    print(f"  - Recent mention window: {RECENT_MENTION_HOURS} hours")
-    print(f"  - Message search limit: {RECENT_MENTION_LIMIT} per channel") 
-    print(f"  - Selection timeout: {SELECTION_TIMEOUT} seconds")
-    
-    banned_categories["profanity"]["words"] = load_words_from_json("profanity.json")
-    print(f"✅ Profanity list loaded: {len(banned_categories['profanity']['words'])} words")
-    print(f"🔍 First few words: {banned_categories['profanity']['words'][:5]}")
-    
-    # Load player data
-    global players_data
-    players_data = load_players_from_json("players.json")
-    print(f"✅ Player list loaded: {len(players_data)} players")
-    if players_data:
-        print(f"🔍 Sample players: {[p['name'] for p in players_data[:3]]}")
+    try:
+        print("🔥🔥🔥 BOT IS STARTING UP - THIS SHOULD BE VISIBLE 🔥🔥🔥")
+        print(f"✅ Logged in as {bot.user}")
         
-        # Test search for Joe Ryan specifically
-        joe_ryan_found = False
-        for player in players_data:
-            if "joe ryan" in player['name'].lower():
-                print(f"🎯 FOUND JOE RYAN: {player['name']} - {player['team']}")
-                joe_ryan_found = True
-                break
+        # Print timing configuration
+        print(f"⚙️ Timing Config:")
+        print(f"  - Recent mention window: {RECENT_MENTION_HOURS} hours")
+        print(f"  - Message search limit: {RECENT_MENTION_LIMIT} per channel") 
+        print(f"  - Selection timeout: {SELECTION_TIMEOUT} seconds")
         
-        if not joe_ryan_found:
-            print("❌ JOE RYAN NOT FOUND in players database!")
-            # Show some Ryan players for debugging
-            ryan_players = [p for p in players_data if "ryan" in p['name'].lower()]
-            if ryan_players:
-                print(f"🔍 Found {len(ryan_players)} players with 'Ryan' in name:")
-                for rp in ryan_players[:5]:
-                    print(f"   - {rp['name']} ({rp['team']})")
-    else:
-        print("❌ NO PLAYERS DATA LOADED AT ALL!")
-    
-    print(f"✅ Bot is ready and listening for messages")
+        banned_categories["profanity"]["words"] = load_words_from_json("profanity.json")
+        print(f"✅ Profanity list loaded: {len(banned_categories['profanity']['words'])} words")
+        print(f"🔍 First few words: {banned_categories['profanity']['words'][:5]}")
+        
+        # Load player data
+        global players_data
+        players_data = load_players_from_json("players.json")
+        print(f"✅ Player list loaded: {len(players_data)} players")
+        if players_data:
+            print(f"🔍 Sample players: {[p['name'] for p in players_data[:3]]}")
+            
+            # Test search for Joe Ryan specifically
+            joe_ryan_found = False
+            for player in players_data:
+                if "joe ryan" in player['name'].lower():
+                    print(f"🎯 FOUND JOE RYAN: {player['name']} - {player['team']}")
+                    joe_ryan_found = True
+                    break
+            
+            if not joe_ryan_found:
+                print("❌ JOE RYAN NOT FOUND in players database!")
+                # Show some Ryan players for debugging
+                ryan_players = [p for p in players_data if "ryan" in p['name'].lower()]
+                if ryan_players:
+                    print(f"🔍 Found {len(ryan_players)} players with 'Ryan' in name:")
+                    for rp in ryan_players[:5]:
+                        print(f"   - {rp['name']} ({rp['team']})")
+        else:
+            print("❌ NO PLAYERS DATA LOADED AT ALL!")
+        
+        print(f"✅ Bot is ready and listening for messages")
+        
+    except Exception as e:
+        print(f"❌ ERROR IN ON_READY: {e}")
+        raise e
 
 # -------- PREFIX COMMAND: !ask --------
 @bot.command(name="ask")
@@ -533,6 +555,13 @@ async def ask_question(ctx, *, question: str = None):
         print(f"🔍 Sample player names: {[p.get('name', 'NO_NAME') for p in players_data[:3]]}")
     else:
         print("❌ NO PLAYERS DATA LOADED!")
+        error_msg = await ctx.send("Player database is not available. Please try again later.")
+        await error_msg.delete(delay=5)
+        try:
+            await ctx.message.delete()
+        except:
+            pass
+        return
     
     matched_players = check_player_mentioned(question)
     print(f"🔍 Fuzzy matching returned: {matched_players}")
