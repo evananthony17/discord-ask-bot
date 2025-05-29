@@ -100,7 +100,7 @@ def fuzzy_match_players(text, max_results=5):
             best_score = max(best_score, name_score, uuid_score)
         
         # Only include if similarity is above threshold
-        if best_score > 0.6:  # Adjust threshold as needed
+        if best_score > 0.4:  # Lowered from 0.6 to catch more matches
             matches.append((player, best_score))
     
     # Sort by score and remove duplicates by UUID
@@ -406,9 +406,15 @@ async def ask_question(ctx, *, question: str = None):
 
     # Check for player names and fuzzy matching
     print(f"🔍 Checking for player mentions in: {question}")
+    print(f"🔍 Total players in database: {len(players_data)}")
+    if players_data:
+        print(f"🔍 Sample player names: {[p.get('name', 'NO_NAME') for p in players_data[:3]]}")
+    
     matched_players = check_player_mentioned(question)
     if matched_players:
         print(f"🎯 Found {len(matched_players)} potential player matches")
+        for player in matched_players:
+            print(f"🎯 Matched player: {player.get('name', 'NO_NAME')} - {player.get('team', 'NO_TEAM')}")
         
         # Check recent mentions for all matched players
         recent_mentions = await check_recent_player_mentions(ctx.guild, matched_players)
@@ -474,15 +480,15 @@ async def ask_question(ctx, *, question: str = None):
                 
                 print(f"✅ Posted blocking selection message with {len(recent_mentions)} options")
                 
-                # Set up 15-second timeout
+                # Set up timeout
                 asyncio.create_task(handle_selection_timeout(ctx.author.id, ctx))
                 
                 return
         
         # No recent mentions found - continue with normal processing
         print("✅ No recent mentions found, continuing with normal question processing")
-    
-    # No player matches or no recent mentions - continue normal processing
+    else:
+        print("🔍 No player matches found")
 
     # All checks passed - post question to answering channel
     print("✅ All checks passed, posting to answering channel")
