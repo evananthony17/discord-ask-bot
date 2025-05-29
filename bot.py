@@ -319,6 +319,7 @@ async def handle_selection_timeout(user_id, ctx):
 # -------- EVENTS --------
 @bot.event
 async def on_ready():
+    print("BOT IS STARTING UP - THIS SHOULD BE VISIBLE")
     print(f"✅ Logged in as {bot.user}")
     
     # Print timing configuration
@@ -601,11 +602,10 @@ async def on_message(message):
 
     # Handle submission channel - block non-commands only
     if message.channel.name == SUBMISSION_CHANNEL:
-        # For !ask commands, let Discord.py handle them naturally - don't interfere
+        # For !ask commands, do NOTHING here - let Discord.py process them naturally
         if message.content.startswith("!ask"):
-            print("📝 !ask command detected - Discord.py will process it naturally")
-            await bot.process_commands(message)  # Process the command
-            return
+            print("📝 !ask command detected - will be processed by Discord.py naturally")
+            # DO NOT call bot.process_commands here - it will be called at the end
         else:
             # Block everything else: regular text, emojis, server emotes, attachments, etc.
             print(f"🚫 Blocking non-command message in {SUBMISSION_CHANNEL}: '{message.content}'")
@@ -622,6 +622,7 @@ async def on_message(message):
                 f"Only the `!ask` command is allowed in #{SUBMISSION_CHANNEL}."
             )
             await error_msg.delete(delay=5)
+            # Don't process commands for blocked messages
             return
 
     # Handle expert answers (only in answering channel)
@@ -684,9 +685,8 @@ async def on_message(message):
         else:
             print("❌ No matching question found in question_map")
     
-    # For all other channels, process commands normally
-    else:
-        await bot.process_commands(message)
+    # Process commands ONCE at the end for ALL messages
+    await bot.process_commands(message)
 
 # -------- REACTION HANDLER FOR PLAYER SELECTION --------
 @bot.event
