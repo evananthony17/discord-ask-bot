@@ -817,7 +817,7 @@ async def on_message(message):
                 asker_mention = f"<@{meta['asker_id']}>"
                 expert_name = message.author.display_name
                 await final_channel.send(
-                    f"\n{asker_mention} asked:\n> {meta['question']}\n\n**{expert_name}** answered:\n{message.content}\n\n"
+                    f"᲼\n{asker_mention} asked:\n> {meta['question']}\n\n**{expert_name}** answered:\n{message.content}\n᲼"
                 )
                 try:
                     # Fetch the message fresh from Discord to get current content
@@ -966,12 +966,17 @@ async def on_reaction_add(reaction, user):
                     await error_msg.delete(delay=8)
                     return
                 else:
-                    # No recent mentions - proceed with the question
+                    # No recent mentions - proceed with the question, adding selected player info
                     print(f"✅ Selected player {selected_player['name']} has no recent mentions - proceeding with question")
+                    
+                    # Append selected player info to make it clear which player they meant
+                    modified_question = f"{selection_data['original_question']} ({selected_player['name']} - {selected_player['team']})"
+                    print(f"🔧 Modified question: {modified_question}")
+                    
                     await process_approved_question(
                         reaction.message.channel,
                         user,
-                        selection_data["original_question"]
+                        modified_question
                     )
                     return
             
