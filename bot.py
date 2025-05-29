@@ -159,21 +159,22 @@ def fuzzy_match_players(text, max_results=5):
     
     print(f"🔍 FUZZY MATCH DEBUG: Found {len(matches)} total matches before deduplication")
     
-    # Sort by score and remove duplicates by player NAME (not UUID)
+    # Sort by score and remove duplicates by player NAME+TEAM (not just name)
     matches.sort(key=lambda x: x[1], reverse=True)
-    seen_names = set()
+    seen_players = set()
     unique_matches = []
     
     for player, score in matches:
-        player_name_lower = player['name'].lower()
-        if player_name_lower not in seen_names:
+        # Create unique identifier using both name and team
+        player_key = f"{player['name'].lower()}|{player['team'].lower()}"
+        if player_key not in seen_players:
             unique_matches.append(player)
-            seen_names.add(player_name_lower)
+            seen_players.add(player_key)
             print(f"🔍 FUZZY MATCH DEBUG: Added unique player - {player['name']} ({player['team']}) - score: {score:.3f}")
             if len(unique_matches) >= max_results:
                 break
         else:
-            print(f"🔍 FUZZY MATCH DEBUG: Skipped duplicate - {player['name']} ({player['team']}) - score: {score:.3f}")
+            print(f"🔍 FUZZY MATCH DEBUG: Skipped exact duplicate - {player['name']} ({player['team']}) - score: {score:.3f}")
     
     print(f"🔍 FUZZY MATCH DEBUG: Returning {len(unique_matches)} unique matches")
     return unique_matches
@@ -240,18 +241,20 @@ def check_player_mentioned(text):
     
     print(f"🔍 CHECK PLAYER DEBUG: Found {len(direct_matches)} total direct matches")
     
-    # Remove duplicates by name from direct matches
+    # For direct matches, we want to KEEP players with same name but different teams
+    # Only remove exact duplicates (same name AND same team)
     if direct_matches:
-        seen_names = set()
+        seen_players = set()
         unique_direct = []
         for player in direct_matches:
-            name_lower = player['name'].lower()
-            if name_lower not in seen_names:
+            # Create unique identifier using both name and team
+            player_key = f"{player['name'].lower()}|{player['team'].lower()}"
+            if player_key not in seen_players:
                 unique_direct.append(player)
-                seen_names.add(name_lower)
+                seen_players.add(player_key)
                 print(f"🔍 CHECK PLAYER DEBUG: Added unique direct match - {player['name']} ({player['team']})")
             else:
-                print(f"🔍 CHECK PLAYER DEBUG: Skipped duplicate direct match - {player['name']} ({player['team']})")
+                print(f"🔍 CHECK PLAYER DEBUG: Skipped exact duplicate - {player['name']} ({player['team']})")
         
         print(f"🔍 CHECK PLAYER DEBUG: After deduplication: {len(unique_direct)} unique matches")
         
@@ -394,12 +397,15 @@ async def handle_selection_timeout(user_id, ctx):
         # Remove from pending
         del pending_selections[user_id]
         
-        # For blocking selections, timeout means no action (question is blocked by default)
+        # Handle different timeout types
         if data.get("type") == "block_selection":
             print("⏰ Block selection timed out - question blocked by default")
             return
+        elif data.get("type") == "disambiguation_selection":
+            print("⏰ Disambiguation selection timed out - blocking question")
+            return
         
-        # This shouldn't happen with new logic, but fallback to normal processing
+        # Fallback to normal processing (shouldn't happen with current logic)
         question = data["original_question"]
         await process_approved_question(ctx.channel, ctx.author, question)
 
@@ -570,6 +576,65 @@ async def ask_question(ctx, *, question: str = None):
         print(f"🎯 Found {len(matched_players)} potential player matches")
         for player in matched_players:
             print(f"🎯 Matched player: {player.get('name', 'NO_NAME')} - {player.get('team', 'NO_TEAM')}")
+        
+        # Check if we have multiple players with the same name (need disambiguation)
+        if len(matched_players) > 1:
+            # Group players by name to see if we have same-name players
+            from collections import defaultdict
+            players_by_name = defaultdict(list)
+            for player in matched_players:
+                players_by_name[player['name'].lower()].append(player)
+            
+            # Check if any name has multiple players (different teams)
+            needs_disambiguation = False
+            for name, players in players_by_name.items():
+                if len(players) > 1:
+                    needs_disambiguation = True
+                    break
+            
+            if needs_disambiguation:
+                print(f"🤔 Multiple players with same name found - showing disambiguation selection")
+                
+                selection_text = "Multiple players found. Which did you mean:\n"
+                reactions = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣"]
+                
+                for i, player in enumerate(matched_players):
+                    if i < len(reactions):
+                        selection_text += f"{reactions[i]} {player['name']} - {player['team']}\n"
+                        print(f"🤔 Disambiguation option {i+1}: {player['name']} - {player['team']}")
+                
+                # Add a small delay before showing the selection
+                await asyncio.sleep(PRE_SELECTION_DELAY)
+                
+                print(f"🤔 About to post disambiguation selection...")
+                
+                # Post selection message
+                selection_msg = await ctx.send(selection_text)
+                print(f"🤔 Posted disambiguation selection with ID: {selection_msg.id}")
+                
+                # Add reactions
+                for i in range(min(len(matched_players), len(reactions))):
+                    await selection_msg.add_reaction(reactions[i])
+                    print(f"🤔 Added reaction {reactions[i]}")
+                
+                # Store pending selection for disambiguation
+                pending_selections[ctx.author.id] = {
+                    "message": selection_msg,
+                    "players": matched_players,
+                    "original_question": question,
+                    "locked": False,
+                    "original_user_message": ctx.message,
+                    "type": "disambiguation_selection"  # This is for picking which player they meant
+                }
+                
+                print(f"✅ Posted disambiguation selection with {len(matched_players)} options")
+                print(f"✅ Stored pending disambiguation for user {ctx.author.id}")
+                
+                # Set up timeout
+                asyncio.create_task(handle_selection_timeout(ctx.author.id, ctx))
+                
+                print("🚨 COMMAND HANDLER FINISHED - SHOWING DISAMBIGUATION")
+                return
         
         # Check recent mentions for all matched players
         recent_mentions = await check_recent_player_mentions(ctx.guild, matched_players)
@@ -752,7 +817,7 @@ async def on_message(message):
                 asker_mention = f"<@{meta['asker_id']}>"
                 expert_name = message.author.display_name
                 await final_channel.send(
-                    f"{asker_mention} asked:\n> {meta['question']}\n\n**{expert_name}** answered:\n{message.content}\n\n"
+                    f"\n{asker_mention} asked:\n> {meta['question']}\n\n**{expert_name}** answered:\n{message.content}\n\n"
                 )
                 try:
                     # Fetch the message fresh from Discord to get current content
@@ -852,8 +917,9 @@ async def on_reaction_add(reaction, user):
             # Remove from pending selections
             del pending_selections[user.id]
             
-            # This is a blocking selection - show appropriate block message
+            # Handle different selection types
             if selection_data.get("type") == "block_selection":
+                # This is a blocking selection - show appropriate block message
                 # Find the selected player's status
                 selected_mention = None
                 for mention in selection_data["mentions"]:
@@ -875,7 +941,41 @@ async def on_reaction_add(reaction, user):
                     await error_msg.delete(delay=8)
                     return
             
-            # This shouldn't happen with the new logic, but fallback to normal processing
+            elif selection_data.get("type") == "disambiguation_selection":
+                # This is a disambiguation selection - now check recent mentions for the selected player
+                print(f"🎯 User disambiguated to: {selected_player['name']} ({selected_player['team']})")
+                
+                # Check recent mentions for this specific player
+                recent_mentions = await check_recent_player_mentions(reaction.message.guild, [selected_player])
+                
+                if recent_mentions:
+                    mention = recent_mentions[0]
+                    status = mention["status"]
+                    
+                    print(f"🚫 Selected player {selected_player['name']} has recent mention with status: {status}")
+                    
+                    if status == "answered":
+                        error_msg = await reaction.message.channel.send(
+                            f"This player has been asked about recently. There is an answer here: {FINAL_ANSWER_LINK}"
+                        )
+                    else:  # pending
+                        error_msg = await reaction.message.channel.send(
+                            "This player has been asked about recently, please be patient and wait for an answer."
+                        )
+                    
+                    await error_msg.delete(delay=8)
+                    return
+                else:
+                    # No recent mentions - proceed with the question
+                    print(f"✅ Selected player {selected_player['name']} has no recent mentions - proceeding with question")
+                    await process_approved_question(
+                        reaction.message.channel,
+                        user,
+                        selection_data["original_question"]
+                    )
+                    return
+            
+            # Fallback to normal processing (shouldn't happen with current logic)
             await process_approved_question(
                 reaction.message.channel, 
                 user, 
