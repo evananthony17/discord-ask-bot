@@ -538,19 +538,15 @@ async def on_message(message):
     if message.author.bot:
         return
     
-    # Only process messages in the submission channel or answering channel
-    if message.channel.name not in [SUBMISSION_CHANNEL, ANSWERING_CHANNEL]:
-        await bot.process_commands(message)
-        return
-    
     print(f"📨 Message received in #{message.channel.name}: {message.content[:50]}...")
 
-    # Check if someone sends any message other than !ask in the submission channel
+    # Handle submission channel - block non-commands only
     if message.channel.name == SUBMISSION_CHANNEL:
-        # Allow !ask commands to be processed normally
+        # Allow !ask commands to be processed by command handler
         if message.content.startswith("!ask"):
-            # Let the command handler deal with validation
-            pass
+            print("📝 !ask command detected - letting command handler process it")
+            await bot.process_commands(message)
+            return
         else:
             # Block everything else: regular text, emojis, server emotes, attachments, etc.
             print(f"🚫 Blocking non-command message in {SUBMISSION_CHANNEL}: '{message.content}'")
@@ -629,7 +625,9 @@ async def on_message(message):
         else:
             print("❌ No matching question found in question_map")
 
-    await bot.process_commands(message)
+    # Process commands for other channels
+    if message.channel.name not in [SUBMISSION_CHANNEL, ANSWERING_CHANNEL]:
+        await bot.process_commands(message)
 
 # -------- REACTION HANDLER FOR PLAYER SELECTION --------
 @bot.event
