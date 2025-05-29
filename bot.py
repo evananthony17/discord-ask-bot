@@ -191,24 +191,7 @@ async def ask_question(ctx, *, question: str = None):
         await error_msg.delete(delay=5)
         return
 
-    answer_channel = discord.utils.get(ctx.guild.text_channels, name=ANSWERING_CHANNEL)
-    if answer_channel:
-        print(f"✅ Found answer channel: #{ANSWERING_CHANNEL}")
-        username = ctx.author.display_name
-        # Add red exclamation and "Not Answered" status at the bottom
-        repost = await answer_channel.send(f"**{username}** asked:\n> {question}\n\n❗ **Not Answered**\n")
-        question_map[repost.id] = {"question": question, "asker_id": ctx.author.id}
-        print(f"✅ Question stored with ID: {repost.id}")
-
-        # Delete the user's original message
-        try:
-            await ctx.message.delete()
-            print("✅ User's original message deleted")
-        except Exception as e:
-            print(f"❌ Failed to delete user's message: {e}")
-
-        # Leave a simple confirmation message instead of reposting the question
-        confirmation_msg = await ctx.send(f"**{username}**, your question was submitted! An answer will appear in {FINAL_ANSWER_LINK}.")
+}.")
         await confirmation_msg.delete(delay=5)
         print("✅ Confirmation message sent in submission channel (will delete in 5 seconds)")
 
