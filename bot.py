@@ -145,13 +145,31 @@ def fuzzy_match_players(text, max_results=5):
             # Calculate similarity
             similarity = SequenceMatcher(None, potential_name, player_name).ratio()
             
-            if similarity >= 0.85:  # High threshold for quality matches
-                matches.append((player, similarity))
-                print(f"🔍 FUZZY MATCH DEBUG: GOOD MATCH - '{potential_name}' vs '{player_name}' = {similarity:.3f}")
+            # Special handling for last names - if potential name matches last name well, boost score
+            player_last_name = player_name.split()[-1] if ' ' in player_name else player_name
+            last_name_similarity = SequenceMatcher(None, potential_name, player_last_name).ratio()
+            
+            # Check for exact last name match (case insensitive)
+            exact_last_name_match = potential_name == player_last_name
+            
+            # Use the better of full name match or last name match, with bonus for exact last name
+            if exact_last_name_match:
+                best_similarity = 1.0  # Perfect match for exact last name
+            else:
+                best_similarity = max(similarity, last_name_similarity)
+            
+            if best_similarity >= 0.7:  # Lowered threshold for better matching
+                matches.append((player, best_similarity))
+                if exact_last_name_match:
+                    print(f"🔍 FUZZY MATCH DEBUG: EXACT LAST NAME MATCH - '{potential_name}' = '{player_last_name}' (from {player_name}) = {best_similarity:.3f}")
+                elif last_name_similarity > similarity:
+                    print(f"🔍 FUZZY MATCH DEBUG: GOOD LAST NAME MATCH - '{potential_name}' vs '{player_last_name}' (from {player_name}) = {last_name_similarity:.3f}")
+                else:
+                    print(f"🔍 FUZZY MATCH DEBUG: GOOD MATCH - '{potential_name}' vs '{player_name}' = {similarity:.3f}")
             else:
                 # Only log decent attempts to reduce spam
-                if similarity >= 0.6:
-                    print(f"🔍 FUZZY MATCH DEBUG: weak match - '{potential_name}' vs '{player_name}' = {similarity:.3f}")
+                if best_similarity >= 0.5:
+                    print(f"🔍 FUZZY MATCH DEBUG: weak match - '{potential_name}' vs '{player_name}' = {best_similarity:.3f}")
     
     if not matches:
         print("🔍 FUZZY MATCH DEBUG: No matches found above threshold")
@@ -318,14 +336,15 @@ async def check_recent_player_mentions(guild, players_to_check):
             except Exception as e:
                 print(f"❌ Error checking answering channel: {e}")
         
-        # Add to results if found (but avoid duplicates by name)
+        # Add to results if found (but avoid duplicates by name+team)
         if found_status:
-            # Check if we already have this player name
+            # Check if we already have this exact player (name + team)
             already_added = False
             for existing in recent_mentions:
-                if existing["player"]["name"].lower() == player["name"].lower():
+                if (existing["player"]["name"].lower() == player["name"].lower() and 
+                    existing["player"]["team"].lower() == player["team"].lower()):
                     already_added = True
-                    print(f"🕒 Skipping duplicate recent mention for {player['name']}")
+                    print(f"🕒 Skipping duplicate recent mention for {player['name']} ({player['team']})")
                     break
             
             if not already_added:
@@ -333,12 +352,20 @@ async def check_recent_player_mentions(guild, players_to_check):
                     "player": player,
                     "status": found_status
                 })
-                print(f"🕒 Added recent mention: {player['name']} - {found_status}")
+                print(f"🕒 Added recent mention: {player['name']} ({player['team']}) - {found_status}")
     
     return recent_mentions
 
-async def process_approved_question(channel, user, question):
+async def process_approved_question(channel, user, question, original_message=None):
     """Process a question that has passed all checks"""
+    # Delete the original message if provided
+    if original_message:
+        try:
+            await original_message.delete()
+            print("✅ Deleted original user message in process_approved_question")
+        except Exception as e:
+            print(f"❌ Failed to delete original message in process_approved_question: {e}")
+    
     answering_channel = discord.utils.get(channel.guild.text_channels, name=ANSWERING_CHANNEL)
     
     if answering_channel:
@@ -406,8 +433,9 @@ async def handle_selection_timeout(user_id, ctx):
             return
         
         # Fallback to normal processing (shouldn't happen with current logic)
+        # Note: original message already deleted above, so pass None
         question = data["original_question"]
-        await process_approved_question(ctx.channel, ctx.author, question)
+        await process_approved_question(ctx.channel, ctx.author, question, None)
 
 # -------- EVENTS --------
 @bot.event
@@ -722,45 +750,9 @@ async def ask_question(ctx, *, question: str = None):
 
     # All checks passed - post question to answering channel
     print("✅ All checks passed, posting to answering channel")
-    answering_channel = discord.utils.get(ctx.guild.text_channels, name=ANSWERING_CHANNEL)
     
-    if answering_channel:
-        # Format the question for the answering channel
-        asker_name = f"**{ctx.author.display_name}**"
-        formatted_message = f"{asker_name} asked:\n> {question}\n\n❗ **Not Answered**\n\nReply to this message to answer."
-        
-        try:
-            # Post to answering channel
-            posted_message = await answering_channel.send(formatted_message)
-            print(f"✅ Posted question to #{ANSWERING_CHANNEL}")
-            
-            # Store the question mapping for later reference
-            question_map[posted_message.id] = {
-                "question": question,
-                "asker_id": ctx.author.id
-            }
-            print(f"✅ Stored question mapping for message ID {posted_message.id}")
-            
-            # Delete the original message
-            try:
-                await ctx.message.delete()
-                print("✅ Deleted original user message")
-            except Exception as e:
-                print(f"❌ Failed to delete original message: {e}")
-            
-            # Send confirmation message
-            confirmation_msg = await ctx.send(f"✅ Your question has been posted for experts to answer.")
-            await confirmation_msg.delete(delay=5)
-            print("✅ Confirmation message sent and will be deleted in 5 seconds")
-            
-        except Exception as e:
-            print(f"❌ Failed to post question to answering channel: {e}")
-            error_msg = await ctx.send("❌ Failed to post your question. Please try again.")
-            await error_msg.delete(delay=5)
-    else:
-        print(f"❌ Could not find #{ANSWERING_CHANNEL}")
-        error_msg = await ctx.send(f"❌ Could not find #{ANSWERING_CHANNEL}")
-        await error_msg.delete(delay=5)
+    # Use the centralized function with original message for deletion
+    await process_approved_question(ctx.channel, ctx.author, question, ctx.message)
         
     print("🚨 COMMAND HANDLER FINISHED - NORMAL PROCESSING")
 
@@ -816,9 +808,9 @@ async def on_message(message):
             if final_channel:
                 asker_mention = f"<@{meta['asker_id']}>"
                 expert_name = message.author.display_name
-                await final_channel.send(
-                    f"᲼\n{asker_mention} asked:\n> {meta['question']}\n\n**{expert_name}** answered:\n{message.content}\n᲼"
-                )
+                # Use dashes for clear visual separation
+                formatted_answer = f"-----\n**Question:**\n{asker_mention} asked: {meta['question']}\n\n**Answer:**\n**{expert_name}** replied:\n{message.content}\n-----"
+                await final_channel.send(formatted_answer)
                 try:
                     # Fetch the message fresh from Discord to get current content
                     fresh_message = await message.channel.fetch_message(referenced.id)
@@ -908,11 +900,7 @@ async def on_reaction_add(reaction, user):
             except Exception as e:
                 print(f"❌ Failed to delete selection message: {e}")
             
-            try:
-                await selection_data["original_user_message"].delete()
-                print("✅ Deleted original user message")
-            except Exception as e:
-                print(f"❌ Failed to delete original user message: {e}")
+            # Note: original_user_message will be deleted in process_approved_question
             
             # Remove from pending selections
             del pending_selections[user.id]
@@ -976,7 +964,8 @@ async def on_reaction_add(reaction, user):
                     await process_approved_question(
                         reaction.message.channel,
                         user,
-                        modified_question
+                        modified_question,
+                        selection_data["original_user_message"]
                     )
                     return
             
@@ -984,7 +973,8 @@ async def on_reaction_add(reaction, user):
             await process_approved_question(
                 reaction.message.channel, 
                 user, 
-                selection_data["original_question"]
+                selection_data["original_question"],
+                selection_data.get("original_user_message")
             )
     
     # Invalid reaction - clean up and remove from pending
