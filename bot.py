@@ -676,6 +676,13 @@ async def on_message(message):
     if message.author.bot:
         return
     
+    # Only process messages in specific channels we care about
+    relevant_channels = [SUBMISSION_CHANNEL, ANSWERING_CHANNEL, FINAL_ANSWER_CHANNEL]
+    
+    if message.channel.name not in relevant_channels:
+        # Ignore messages in channels we don't care about
+        return
+    
     print(f"📨 Message received in #{message.channel.name}: {message.content[:50]}...")
 
     # Handle submission channel - block non-commands only
