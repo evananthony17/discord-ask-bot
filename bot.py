@@ -138,17 +138,21 @@ def fuzzy_match_players(text, max_results=5):
     
     print(f"🔍 FUZZY MATCH DEBUG: Found {len(matches)} total matches before deduplication")
     
-    # Sort by score and remove duplicates by UUID
+    # Sort by score and remove duplicates by player NAME (not UUID)
     matches.sort(key=lambda x: x[1], reverse=True)
-    seen_uuids = set()
+    seen_names = set()
     unique_matches = []
     
     for player, score in matches:
-        if player['uuid'] not in seen_uuids:
+        player_name_lower = player['name'].lower()
+        if player_name_lower not in seen_names:
             unique_matches.append(player)
-            seen_uuids.add(player['uuid'])
+            seen_names.add(player_name_lower)
+            print(f"🔍 FUZZY MATCH DEBUG: Added unique player - {player['name']} ({player['team']})")
             if len(unique_matches) >= max_results:
                 break
+        else:
+            print(f"🔍 FUZZY MATCH DEBUG: Skipped duplicate - {player['name']} ({player['team']})")
     
     print(f"🔍 FUZZY MATCH DEBUG: Returning {len(unique_matches)} unique matches")
     return unique_matches
@@ -259,12 +263,22 @@ async def check_recent_player_mentions(guild, players_to_check):
             except Exception as e:
                 print(f"❌ Error checking answering channel: {e}")
         
-        # Add to results if found
+        # Add to results if found (but avoid duplicates by name)
         if found_status:
-            recent_mentions.append({
-                "player": player,
-                "status": found_status
-            })
+            # Check if we already have this player name
+            already_added = False
+            for existing in recent_mentions:
+                if existing["player"]["name"].lower() == player["name"].lower():
+                    already_added = True
+                    print(f"🕒 Skipping duplicate recent mention for {player['name']}")
+                    break
+            
+            if not already_added:
+                recent_mentions.append({
+                    "player": player,
+                    "status": found_status
+                })
+                print(f"🕒 Added recent mention: {player['name']} - {found_status}")
     
     return recent_mentions
 
@@ -526,6 +540,8 @@ async def ask_question(ctx, *, question: str = None):
             # Multiple players with recent mentions - show selection dialog
             else:
                 print(f"🤔 Multiple players with recent mentions, showing selection")
+                print(f"🤔 Creating selection for {len(recent_mentions)} unique players")
+                
                 selection_text = "Multiple players have been asked about recently. Which did you mean:\n"
                 reactions = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣"]
                 
@@ -534,16 +550,21 @@ async def ask_question(ctx, *, question: str = None):
                     status = mention["status"]
                     status_text = "recently answered" if status == "answered" else "pending answer"
                     selection_text += f"{reactions[i]} {player['name']} - {player['team']} ({status_text})\n"
+                    print(f"🤔 Selection option {i+1}: {player['name']} - {player['team']} ({status_text})")
                 
                 # Add a small delay before showing the selection to ensure message is posted
                 await asyncio.sleep(PRE_SELECTION_DELAY)
                 
+                print(f"🤔 About to post selection message...")
+                
                 # Post selection message
                 selection_msg = await ctx.send(selection_text)
+                print(f"🤔 Posted selection message with ID: {selection_msg.id}")
                 
                 # Add reactions
                 for i in range(len(recent_mentions)):
                     await selection_msg.add_reaction(reactions[i])
+                    print(f"🤔 Added reaction {reactions[i]}")
                 
                 # Store pending selection (but for blocking purposes)
                 pending_selections[ctx.author.id] = {
@@ -557,6 +578,7 @@ async def ask_question(ctx, *, question: str = None):
                 }
                 
                 print(f"✅ Posted blocking selection message with {len(recent_mentions)} options")
+                print(f"✅ Stored pending selection for user {ctx.author.id}")
                 
                 # Set up timeout
                 asyncio.create_task(handle_selection_timeout(ctx.author.id, ctx))
