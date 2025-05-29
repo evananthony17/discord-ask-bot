@@ -4,3 +4,4 @@ __pycache__/
 .env
 profanity.json
 badwords_files/
+players.json
