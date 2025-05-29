@@ -191,10 +191,43 @@ async def ask_question(ctx, *, question: str = None):
         await error_msg.delete(delay=5)
         return
 
-}.")
-        await confirmation_msg.delete(delay=5)
-        print("✅ Confirmation message sent in submission channel (will delete in 5 seconds)")
-
+    # All checks passed - post question to answering channel
+    print("✅ All checks passed, posting to answering channel")
+    answering_channel = discord.utils.get(ctx.guild.text_channels, name=ANSWERING_CHANNEL)
+    
+    if answering_channel:
+        # Format the question for the answering channel
+        asker_mention = f"<@{ctx.author.id}>"
+        formatted_message = f"{asker_mention} asked:\n> {question}\n\n❗ **Not Answered**\n\nReply to this message to answer."
+        
+        try:
+            # Post to answering channel
+            posted_message = await answering_channel.send(formatted_message)
+            print(f"✅ Posted question to #{ANSWERING_CHANNEL}")
+            
+            # Store the question mapping for later reference
+            question_map[posted_message.id] = {
+                "question": question,
+                "asker_id": ctx.author.id
+            }
+            print(f"✅ Stored question mapping for message ID {posted_message.id}")
+            
+            # Delete the original message
+            try:
+                await ctx.message.delete()
+                print("✅ Deleted original user message")
+            except Exception as e:
+                print(f"❌ Failed to delete original message: {e}")
+            
+            # Send confirmation message
+            confirmation_msg = await ctx.send(f"✅ Your question has been posted to #{ANSWERING_CHANNEL} for experts to answer.")
+            await confirmation_msg.delete(delay=5)
+            print("✅ Confirmation message sent and will be deleted in 5 seconds")
+            
+        except Exception as e:
+            print(f"❌ Failed to post question to answering channel: {e}")
+            error_msg = await ctx.send("❌ Failed to post your question. Please try again.")
+            await error_msg.delete(delay=5)
     else:
         print(f"❌ Could not find #{ANSWERING_CHANNEL}")
         error_msg = await ctx.send(f"❌ Could not find #{ANSWERING_CHANNEL}")
@@ -214,67 +247,15 @@ async def on_message(message):
     print(f"📨 Message received in #{message.channel.name}: {message.content[:50]}...")
 
     # Check if someone sends any message other than !ask in the submission channel
-    # This includes regular messages, emojis, GIFs, server emotes, and other commands
     if message.channel.name == SUBMISSION_CHANNEL:
-        # Allow !ask commands, but check for profanity and mentions first
+        # Allow !ask commands to be processed normally
         if message.content.startswith("!ask"):
-            # Extract the question from the command
-            question_text = message.content[5:].strip()  # Remove "!ask " prefix
-            if question_text:
-                print(f"🔍 Pre-checking question for banned words: {question_text}")
-                
-                # Check for mentions first
-                if contains_mention(question_text):
-                    print(f"🚫 Found @mention before command processing")
-                    # Delete the message immediately
-                    try:
-                        await message.delete()
-                        print("✅ Deleted message with @mention in on_message event")
-                    except Exception as e:
-                        print(f"❌ Failed to delete message in on_message: {e}")
-                    
-                    # Send warning
-                    error_msg = await message.channel.send("@mentions are not allowed in questions. Please ask your question without mentioning anyone.")
-                    await error_msg.delete(delay=5)
-                    return  # Don't process the command
-                
-                # Check for URLs
-                if contains_url(question_text):
-                    print(f"🚫 Found URL before command processing")
-                    # Delete the message immediately
-                    try:
-                        await message.delete()
-                        print("✅ Deleted message with URL in on_message event")
-                    except Exception as e:
-                        print(f"❌ Failed to delete message in on_message: {e}")
-                    
-                    # Send warning
-                    error_msg = await message.channel.send("URLs are not allowed in questions. Please ask your question without including any links.")
-                    await error_msg.delete(delay=5)
-                    return  # Don't process the command
-                
-                # Check for banned words
-                banned_category = contains_banned_word(question_text)
-                if banned_category:
-                    print(f"🚫 Found banned word before command processing")
-                    # Delete the message immediately
-                    try:
-                        await message.delete()
-                        print("✅ Deleted profane message in on_message event")
-                    except Exception as e:
-                        print(f"❌ Failed to delete message in on_message: {e}")
-                    
-                    # Send warning
-                    response = banned_categories[banned_category]["response"]
-                    error_msg = await message.channel.send(response)
-                    await error_msg.delete(delay=5)
-                    return  # Don't process the command
-            # If no violations, let the command process normally
+            # Let the command handler deal with validation
+            pass
         else:
             # Block everything else: regular text, emojis, server emotes, attachments, etc.
-            print(f"🚫 Blocking message in {SUBMISSION_CHANNEL}: '{message.content}'")
+            print(f"🚫 Blocking non-command message in {SUBMISSION_CHANNEL}: '{message.content}'")
             print(f"📎 Attachments: {len(message.attachments)}")
-            print(f"😀 Custom emojis: {len(message.content) == 0 and len(message.attachments) == 0}")
             
             # Delete the original message first
             try:
@@ -311,7 +292,6 @@ async def on_message(message):
                     print(f"🔍 Original content: {repr(original_content)}")
                     
                     # Replace the red exclamation and "Not Answered" with green check and "Answered"
-                    # Try different possible formats to ensure we catch it
                     if "❗ **Not Answered**\n" in original_content:
                         updated_content = original_content.replace("❗ **Not Answered**\n", "✅ **Answered**\n")
                         print("🔧 Replaced with newline version")
