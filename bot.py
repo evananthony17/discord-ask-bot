@@ -9,6 +9,7 @@ SUBMISSION_CHANNEL = "ask-the-experts"
 ANSWERING_CHANNEL = "question-reposting"
 FINAL_ANSWER_CHANNEL = "answered-by-expert"
 FAQ_LINK = "https://discord.com/channels/849784755388940290/1374490028549603408"
+FINAL_ANSWER_LINK = "https://discord.com/channels/849784755388940290/1377375716286533823"
 
 # -------- SETUP INTENTS --------
 intents = discord.Intents.default()
@@ -25,7 +26,7 @@ banned_categories = {
         "response": "Your question contains profanity and was removed."
     },
     "banned_topics": {
-        "words": ["lock", "locks", "auto clicker", "clicker", "just pulled", "pulled", "who do I invest in"],
+        "words": ["lock", "locks", "auto clicker", "clicker", "just pulled", "pulled", "who do I invest in", "NFT", "DM", "Crypto", "OnlyFans"],
         "response": f"This topic is not allowed, please consult the FAQs: {FAQ_LINK}"
     }
 }
@@ -70,6 +71,22 @@ def contains_mention(text):
         return True
     return False
 
+def contains_url(text):
+    """Check if text contains any URLs"""
+    # Check for https/http
+    if re.search(r'https?://', text, re.IGNORECASE):
+        return True
+    # Check for common TLDs
+    if re.search(r'\b\w+\.(com|org|net|edu|gov|io|co|me|app|ly|gg|tv|fm|tk|ml|ga|cf)\b', text, re.IGNORECASE):
+        return True
+    # Check for discord links specifically
+    if re.search(r'discord\.(gg|com)', text, re.IGNORECASE):
+        return True
+    # Check for www prefix
+    if re.search(r'\bwww\.\w+', text, re.IGNORECASE):
+        return True
+    return False
+
 # -------- EVENTS --------
 @bot.event
 async def on_ready():
@@ -100,8 +117,8 @@ async def ask_question(ctx, *, question: str = None):
 
     print(f"🔍 Checking question length: {len(question)} characters")
     
-    # Check character limit
-    if len(question) > 200:
+    # Check character limit (increased to 300)
+    if len(question) > 300:
         print(f"🚫 Question too long: {len(question)} characters")
         
         # Delete the user's message first
@@ -111,13 +128,13 @@ async def ask_question(ctx, *, question: str = None):
         except Exception as e:
             print(f"❌ Failed to delete user's message: {e}")
         
-        error_msg = await ctx.send(f"Your question is too long ({len(question)} characters). Please keep questions under 200 characters.")
+        error_msg = await ctx.send(f"Your question is too long ({len(question)} characters). Please keep questions under 300 characters.")
         await error_msg.delete(delay=5)
         return
 
     print(f"🔍 Checking for banned words in: {question}")
     
-    # Check for server emotes in the question
+    # Check for server emotes in the question (custom server emotes only)
     if re.search(r'<a?:\w+:\d+>', question):
         print("🚫 Server emote detected in question")
         # Delete the user's message first
@@ -142,6 +159,20 @@ async def ask_question(ctx, *, question: str = None):
             print(f"❌ Failed to delete user's message: {e}")
         
         error_msg = await ctx.send("@mentions are not allowed in questions. Please ask your question without mentioning anyone.")
+        await error_msg.delete(delay=5)
+        return
+    
+    # Check for URLs in the question
+    if contains_url(question):
+        print("🚫 URL detected in question")
+        # Delete the user's message first
+        try:
+            await ctx.message.delete()
+            print("✅ Deleted user's message with URL")
+        except Exception as e:
+            print(f"❌ Failed to delete user's message: {e}")
+        
+        error_msg = await ctx.send("URLs are not allowed in questions. Please ask your question without including any links.")
         await error_msg.delete(delay=5)
         return
     
@@ -176,9 +207,10 @@ async def ask_question(ctx, *, question: str = None):
         except Exception as e:
             print(f"❌ Failed to delete user's message: {e}")
 
-        # Leave a clean artifact showing who asked
-        artifact_msg = await ctx.send(f"**{username}** asked:\n> {question}")
-        print("✅ Question artifact left in submission channel")
+        # Leave a simple confirmation message instead of reposting the question
+        confirmation_msg = await ctx.send(f"**{username}**, your question was submitted! An answer will appear in {FINAL_ANSWER_LINK}.")
+        await confirmation_msg.delete(delay=5)
+        print("✅ Confirmation message sent in submission channel (will delete in 5 seconds)")
 
     else:
         print(f"❌ Could not find #{ANSWERING_CHANNEL}")
@@ -220,6 +252,21 @@ async def on_message(message):
                     
                     # Send warning
                     error_msg = await message.channel.send("@mentions are not allowed in questions. Please ask your question without mentioning anyone.")
+                    await error_msg.delete(delay=5)
+                    return  # Don't process the command
+                
+                # Check for URLs
+                if contains_url(question_text):
+                    print(f"🚫 Found URL before command processing")
+                    # Delete the message immediately
+                    try:
+                        await message.delete()
+                        print("✅ Deleted message with URL in on_message event")
+                    except Exception as e:
+                        print(f"❌ Failed to delete message in on_message: {e}")
+                    
+                    # Send warning
+                    error_msg = await message.channel.send("URLs are not allowed in questions. Please ask your question without including any links.")
                     await error_msg.delete(delay=5)
                     return  # Don't process the command
                 
