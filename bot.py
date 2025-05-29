@@ -197,8 +197,8 @@ async def ask_question(ctx, *, question: str = None):
     
     if answering_channel:
         # Format the question for the answering channel
-        asker_mention = f"<@{ctx.author.id}>"
-        formatted_message = f"{asker_mention} asked:\n> {question}\n\n❗ **Not Answered**\n\nReply to this message to answer."
+        asker_name = f"**{ctx.author.display_name}**"
+        formatted_message = f"{asker_name} asked:\n> {question}\n\n❗ **Not Answered**\n\nReply to this message to answer."
         
         try:
             # Post to answering channel
@@ -220,7 +220,7 @@ async def ask_question(ctx, *, question: str = None):
                 print(f"❌ Failed to delete original message: {e}")
             
             # Send confirmation message
-            confirmation_msg = await ctx.send(f"✅ Your question has been posted to #{ANSWERING_CHANNEL} for experts to answer.")
+            confirmation_msg = await ctx.send(f"✅ Your question has been posted for experts to answer.")
             await confirmation_msg.delete(delay=5)
             print("✅ Confirmation message sent and will be deleted in 5 seconds")
             
