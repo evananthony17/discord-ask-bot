@@ -56,13 +56,34 @@ def load_words_from_json(filename):
         return []
 
 def load_players_from_json(filename):
+    print(f"🔍 LOADING PLAYERS: Attempting to load {filename}")
     try:
+        import os
+        print(f"🔍 LOADING PLAYERS: Current working directory: {os.getcwd()}")
+        print(f"🔍 LOADING PLAYERS: Files in directory: {os.listdir('.')}")
+        
+        if not os.path.exists(filename):
+            print(f"❌ LOADING PLAYERS: File {filename} does not exist!")
+            return []
+            
         with open(filename, "r", encoding="utf-8") as file:
             data = json.load(file)
-            # Expecting array of player objects from MLB API
+            print(f"🔍 LOADING PLAYERS: Successfully loaded JSON data")
+            print(f"🔍 LOADING PLAYERS: Data type: {type(data)}")
+            print(f"🔍 LOADING PLAYERS: Data length: {len(data) if isinstance(data, list) else 'not a list'}")
+            
+            if isinstance(data, list) and len(data) > 0:
+                print(f"🔍 LOADING PLAYERS: First player: {data[0]}")
+            
             return data if isinstance(data, list) else []
+    except FileNotFoundError as e:
+        print(f"❌ LOADING PLAYERS: File not found - {filename}: {e}")
+        return []
+    except json.JSONDecodeError as e:
+        print(f"❌ LOADING PLAYERS: JSON decode error in {filename}: {e}")
+        return []
     except Exception as e:
-        print(f"Error loading {filename}: {e}")
+        print(f"❌ LOADING PLAYERS: Unexpected error loading {filename}: {e}")
         return []
 
 def fuzzy_match_players(text, max_results=5):
@@ -319,7 +340,7 @@ async def handle_selection_timeout(user_id, ctx):
 # -------- EVENTS --------
 @bot.event
 async def on_ready():
-    print("BOT IS STARTING UP - THIS SHOULD BE VISIBLE")
+    print("🔥🔥🔥 BOT IS STARTING UP - THIS SHOULD BE VISIBLE 🔥🔥🔥")
     print(f"✅ Logged in as {bot.user}")
     
     # Print timing configuration
@@ -494,7 +515,7 @@ async def ask_question(ctx, *, question: str = None):
                     print(f"❌ Failed to delete user's message: {e}")
                 
                 if status == "answered":
-                    error_msg = await ctx.send(f"This player has been asked about recently. There is an answer in #answered-by-expert {FINAL_ANSWER_LINK}")
+                    error_msg = await ctx.send(f"This player has been asked about recently. There is an answer here: {FINAL_ANSWER_LINK}")
                 else:  # pending
                     error_msg = await ctx.send("This player has been asked about recently, please be patient and wait for an answer.")
                 
@@ -751,7 +772,7 @@ async def on_reaction_add(reaction, user):
                     status = selected_mention["status"]
                     if status == "answered":
                         error_msg = await reaction.message.channel.send(
-                            f"This player has been asked about recently. There is an answer in #answered-by-expert {FINAL_ANSWER_LINK}"
+                            f"This player has been asked about recently. There is an answer here: {FINAL_ANSWER_LINK}"
                         )
                     else:  # pending
                         error_msg = await reaction.message.channel.send(
