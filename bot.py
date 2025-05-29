@@ -86,8 +86,42 @@ def load_players_from_json(filename):
         print(f"❌ LOADING PLAYERS: Unexpected error loading {filename}: {e}")
         return []
 
+def extract_potential_names(text):
+    """Extract potential player names from text before fuzzy matching"""
+    print(f"🔍 NAME EXTRACTION: Input text: '{text}'")
+    
+    # Remove common question words and phrases
+    cleaned = text.lower()
+    stop_words = ['how', 'is', 'was', 'are', 'were', 'doing', 'playing', 'performed', 'the', 'a', 'an', 'about', 'what', 'when', 'where', 'why', 'should', 'would', 'could', 'can', 'will', 'today', 'yesterday', 'tomorrow', 'this', 'that', 'these', 'those', 'season', 'year', 'game', 'games']
+    
+    # Split into words and remove stop words
+    words = cleaned.split()
+    filtered_words = [w for w in words if w not in stop_words and len(w) > 1]
+    
+    print(f"🔍 NAME EXTRACTION: Filtered words: {filtered_words}")
+    
+    # Try to find name combinations (first + last name patterns)
+    potential_names = []
+    
+    # Look for 2-word combinations that might be names
+    for i in range(len(filtered_words) - 1):
+        name_combo = f"{filtered_words[i]} {filtered_words[i+1]}"
+        if len(name_combo) >= 6:  # Minimum reasonable name length
+            potential_names.append(name_combo)
+    
+    # Also add individual words that might be last names
+    for word in filtered_words:
+        if len(word) >= 3:
+            potential_names.append(word)
+    
+    # Add the original text as fallback
+    potential_names.append(text.lower())
+    
+    print(f"🔍 NAME EXTRACTION: Potential names to search: {potential_names}")
+    return potential_names
+
 def fuzzy_match_players(text, max_results=5):
-    """Fuzzy match player names in text and return top matches"""
+    """Fuzzy match player names in text and return top matches - IMPROVED VERSION"""
     from difflib import SequenceMatcher
     
     print(f"🔍 FUZZY MATCH DEBUG: Starting fuzzy match for text: '{text}'")
@@ -96,45 +130,32 @@ def fuzzy_match_players(text, max_results=5):
         print("🔍 FUZZY MATCH DEBUG: No players data available")
         return []
     
+    # Extract potential player names from the text
+    potential_names = extract_potential_names(text)
+    
     matches = []
-    text_lower = text.lower()
     
-    # Extract potential player names from text (simple approach)
-    words = re.findall(r'\b[A-Za-z]+\b', text)
-    search_terms = []
-    
-    print(f"🔍 FUZZY MATCH DEBUG: Extracted words: {words}")
-    
-    # Create search terms from consecutive words
-    for i in range(len(words)):
-        for j in range(i + 1, min(i + 4, len(words) + 1)):  # Up to 3-word combinations
-            search_terms.append(' '.join(words[i:j]))
-    
-    # Also add individual words
-    search_terms.extend(words)
-    
-    print(f"🔍 FUZZY MATCH DEBUG: Search terms: {search_terms}")
-    
-    # Score each player against search terms
-    for player in players_data:
-        player_name = player['name'].lower()
-        player_uuid = player['uuid'].lower()
-        best_score = 0
+    # Try fuzzy matching with each potential name
+    for potential_name in potential_names:
+        print(f"🔍 FUZZY MATCH DEBUG: Trying potential name: '{potential_name}'")
         
-        # Check name matching
-        for term in search_terms:
-            name_score = SequenceMatcher(None, term.lower(), player_name).ratio()
-            uuid_score = SequenceMatcher(None, term.lower(), player_uuid[:8]).ratio()  # First 8 chars of UUID
-            best_score = max(best_score, name_score, uuid_score)
+        for player in players_data:
+            player_name = player['name'].lower()
             
-            # Debug high scores
-            if name_score > 0.3 or uuid_score > 0.3:
-                print(f"🔍 FUZZY MATCH DEBUG: '{term}' vs '{player_name}' = {name_score:.3f}")
-        
-        # Only include if similarity is above threshold
-        if best_score > 0.4:  # Lowered from 0.6 to catch more matches
-            matches.append((player, best_score))
-            print(f"🔍 FUZZY MATCH DEBUG: MATCH FOUND - {player['name']} (score: {best_score:.3f})")
+            # Calculate similarity
+            similarity = SequenceMatcher(None, potential_name, player_name).ratio()
+            
+            if similarity >= 0.85:  # High threshold for quality matches
+                matches.append((player, similarity))
+                print(f"🔍 FUZZY MATCH DEBUG: GOOD MATCH - '{potential_name}' vs '{player_name}' = {similarity:.3f}")
+            else:
+                # Only log decent attempts to reduce spam
+                if similarity >= 0.6:
+                    print(f"🔍 FUZZY MATCH DEBUG: weak match - '{potential_name}' vs '{player_name}' = {similarity:.3f}")
+    
+    if not matches:
+        print("🔍 FUZZY MATCH DEBUG: No matches found above threshold")
+        return []
     
     print(f"🔍 FUZZY MATCH DEBUG: Found {len(matches)} total matches before deduplication")
     
@@ -148,11 +169,11 @@ def fuzzy_match_players(text, max_results=5):
         if player_name_lower not in seen_names:
             unique_matches.append(player)
             seen_names.add(player_name_lower)
-            print(f"🔍 FUZZY MATCH DEBUG: Added unique player - {player['name']} ({player['team']})")
+            print(f"🔍 FUZZY MATCH DEBUG: Added unique player - {player['name']} ({player['team']}) - score: {score:.3f}")
             if len(unique_matches) >= max_results:
                 break
         else:
-            print(f"🔍 FUZZY MATCH DEBUG: Skipped duplicate - {player['name']} ({player['team']})")
+            print(f"🔍 FUZZY MATCH DEBUG: Skipped duplicate - {player['name']} ({player['team']}) - score: {score:.3f}")
     
     print(f"🔍 FUZZY MATCH DEBUG: Returning {len(unique_matches)} unique matches")
     return unique_matches
@@ -201,20 +222,34 @@ def contains_url(text):
     return False
 
 def check_player_mentioned(text):
-    """Check if any player from the list is mentioned in the text using fuzzy matching"""
+    """Check if any player from the list is mentioned in the text using IMPROVED fuzzy matching"""
     print(f"🔍 CHECK PLAYER DEBUG: Looking for players in: '{text}'")
     
     # First, do a simple direct search for debugging
     text_lower = text.lower()
     direct_matches = []
     for player in players_data:
-        if player['name'].lower() in text_lower:
+        player_name_lower = player['name'].lower()
+        if player_name_lower in text_lower:
             direct_matches.append(player)
-            print(f"🔍 CHECK PLAYER DEBUG: DIRECT MATCH found: {player['name']}")
+            print(f"🔍 CHECK PLAYER DEBUG: DIRECT MATCH found: {player['name']} ({player['team']})")
     
+    # Remove duplicates by name from direct matches
     if direct_matches:
-        print(f"🔍 CHECK PLAYER DEBUG: Found {len(direct_matches)} direct matches, returning them")
-        return direct_matches
+        seen_names = set()
+        unique_direct = []
+        for player in direct_matches:
+            name_lower = player['name'].lower()
+            if name_lower not in seen_names:
+                unique_direct.append(player)
+                seen_names.add(name_lower)
+                print(f"🔍 CHECK PLAYER DEBUG: Added unique direct match - {player['name']} ({player['team']})")
+            else:
+                print(f"🔍 CHECK PLAYER DEBUG: Skipped duplicate direct match - {player['name']} ({player['team']})")
+        
+        if unique_direct:
+            print(f"🔍 CHECK PLAYER DEBUG: Returning {len(unique_direct)} direct matches")
+            return unique_direct
     
     # If no direct matches, try fuzzy matching
     print(f"🔍 CHECK PLAYER DEBUG: No direct matches, trying fuzzy matching...")
