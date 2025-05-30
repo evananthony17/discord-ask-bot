@@ -15,7 +15,7 @@ FINAL_ANSWER_LINK = "https://discord.com/channels/849784755388940290/13773757162
 
 # -------- TIMING CONFIG --------
 RECENT_MENTION_HOURS = 12  # How far back to check for recent mentions
-RECENT_MENTION_LIMIT = 200  # How many messages to check per channel
+RECENT_MENTION_LIMIT = 100  # How many messages to check per channel (reduced to help with rate limiting)
 SELECTION_TIMEOUT = 30  # How long to wait for user selection (seconds)
 PRE_SELECTION_DELAY = 0.5  # Small delay before posting selection message
 
@@ -89,7 +89,7 @@ def load_players_from_json(filename):
 
 def extract_potential_names(text):
     """Extract potential player names from text before fuzzy matching"""
-    print(f"🔍 NAME EXTRACTION: Input text: '{text}'")
+    # Note: Reduced debug logging to minimize console spam
     
     # Remove common question words and phrases
     cleaned = text.lower()
@@ -98,8 +98,6 @@ def extract_potential_names(text):
     # Split into words and remove stop words
     words = cleaned.split()
     filtered_words = [w for w in words if w not in stop_words and len(w) > 1]
-    
-    print(f"🔍 NAME EXTRACTION: Filtered words: {filtered_words}")
     
     # Try to find name combinations (first + last name patterns)
     potential_names = []
@@ -118,7 +116,7 @@ def extract_potential_names(text):
     # Add the original text as fallback
     potential_names.append(text.lower())
     
-    print(f"🔍 NAME EXTRACTION: Potential names to search: {potential_names}")
+    print(f"🔍 NAME EXTRACTION: Found {len(potential_names)} potential names from '{text}'")
     return potential_names
 
 def fuzzy_match_players(text, max_results=5):
@@ -138,7 +136,9 @@ def fuzzy_match_players(text, max_results=5):
     
     # Try fuzzy matching with each potential name
     for potential_name in potential_names:
-        print(f"🔍 FUZZY MATCH DEBUG: Trying potential name: '{potential_name}'")
+        # Only log for important potential names to reduce spam
+        if len(potential_name) >= 6:
+            print(f"🔍 FUZZY MATCH DEBUG: Trying potential name: '{potential_name}'")
         
         for player in players_data:
             player_name = player['name'].lower()
@@ -163,14 +163,25 @@ def fuzzy_match_players(text, max_results=5):
             # If potential name is much longer/shorter than player name, be more strict
             length_ratio = min(len(potential_name), len(player_name)) / max(len(potential_name), len(player_name))
             
-            # Adjust threshold based on length similarity and word count
+            # Check for problematic substring matches (like "invest" matching "vest")
+            is_problematic_substring = False
+            if len(potential_name) > len(player_last_name) and player_last_name in potential_name:
+                # potential_name contains the player's last name as substring (like "invest" contains "vest")
+                is_problematic_substring = True
+            elif len(player_last_name) > len(potential_name) and potential_name in player_last_name:
+                # player's last name contains potential_name as substring
+                is_problematic_substring = True
+            
+            # Adjust threshold based on various factors
             if exact_last_name_match:
                 threshold = 0.7  # Keep lower threshold for exact last name matches
+            elif is_problematic_substring:
+                threshold = 0.95  # Very strict for substring false positives
             elif ' ' in player_name and ' ' not in potential_name:
                 # Single word trying to match multi-word name - be stricter unless it's a good last name match
                 threshold = 0.85 if last_name_similarity < 0.9 else 0.7
             elif length_ratio < 0.6:
-                # Very different lengths (like "invest" vs "vest") - be much stricter
+                # Very different lengths - be much stricter
                 threshold = 0.9
             else:
                 threshold = 0.7
@@ -185,7 +196,7 @@ def fuzzy_match_players(text, max_results=5):
                     print(f"🔍 FUZZY MATCH DEBUG: GOOD MATCH - '{potential_name}' vs '{player_name}' = {similarity:.3f} (threshold: {threshold:.2f})")
             else:
                 # Only log decent attempts to reduce spam
-                if best_similarity >= 0.5:
+                if best_similarity >= 0.75:  # Increased threshold from 0.5 to reduce logging
                     print(f"🔍 FUZZY MATCH DEBUG: rejected - '{potential_name}' vs '{player_name}' = {best_similarity:.3f} (threshold: {threshold:.2f})")
     
     if not matches:
@@ -642,65 +653,83 @@ async def ask_question(ctx, *, question: str = None):
         for player in matched_players:
             print(f"🎯 Matched player: {player.get('name', 'NO_NAME')} - {player.get('team', 'NO_TEAM')}")
         
-        # Check if we have multiple players with the same name (need disambiguation)
+        # Check if we have multiple players (need disambiguation)
         if len(matched_players) > 1:
-            # Group players by name to see if we have same-name players
-            players_by_name = defaultdict(list)
-            for player in matched_players:
-                players_by_name[player['name'].lower()].append(player)
+            print(f"🤔 Multiple players found ({len(matched_players)}) - showing disambiguation selection")
+            # Check if user already has a pending selection to avoid duplicates
+            if ctx.author.id in pending_selections:
+                print(f"⚠️ User {ctx.author.id} already has a pending selection, skipping duplicate")
+                return
             
-            # Check if any name has multiple players (different teams)
-            needs_disambiguation = False
-            for name, players in players_by_name.items():
-                if len(players) > 1:
-                    needs_disambiguation = True
-                    break
+            selection_text = "Multiple players found. Which did you mean:\n"
+            reactions = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣"]
             
-            if needs_disambiguation:
-                print(f"🤔 Multiple players with same name found - showing disambiguation selection")
-                
-                selection_text = "Multiple players found. Which did you mean:\n"
-                reactions = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣"]
-                
-                for i, player in enumerate(matched_players):
-                    if i < len(reactions):
-                        selection_text += f"{reactions[i]} {player['name']} - {player['team']}\n"
-                        print(f"🤔 Disambiguation option {i+1}: {player['name']} - {player['team']}")
-                
-                # Add a small delay before showing the selection
-                await asyncio.sleep(PRE_SELECTION_DELAY)
-                
-                print(f"🤔 About to post disambiguation selection...")
-                
-                # Post selection message
+            for i, player in enumerate(matched_players):
+                if i < len(reactions):
+                    selection_text += f"{reactions[i]} {player['name']} - {player['team']}\n"
+                    print(f"🤔 Disambiguation option {i+1}: {player['name']} - {player['team']}")
+            
+            # Add a small delay before showing the selection
+            await asyncio.sleep(PRE_SELECTION_DELAY)
+            
+            print(f"🤔 About to post disambiguation selection...")
+            
+            # Post selection message
+            try:
                 selection_msg = await ctx.send(selection_text)
                 print(f"🤔 Posted disambiguation selection with ID: {selection_msg.id}")
-                
-                # Add reactions
-                for i in range(min(len(matched_players), len(reactions))):
+            except Exception as e:
+                print(f"❌ Failed to post disambiguation message: {e}")
+                error_msg = await ctx.send("❌ Error creating player selection. Please try again.")
+                await error_msg.delete(delay=5)
+                return
+            
+            # Add reactions with delay to avoid rate limiting
+            reactions_added = 0
+            for i in range(min(len(matched_players), len(reactions))):
+                try:
                     await selection_msg.add_reaction(reactions[i])
                     print(f"🤔 Added reaction {reactions[i]}")
-                
-                # Store pending selection for disambiguation
-                pending_selections[ctx.author.id] = {
-                    "message": selection_msg,
-                    "players": matched_players,
-                    "original_question": question,
-                    "locked": False,
-                    "original_user_message": ctx.message,
-                    "type": "disambiguation_selection"  # This is for picking which player they meant
-                }
-                
-                print(f"✅ Posted disambiguation selection with {len(matched_players)} options")
-                print(f"✅ Stored pending disambiguation for user {ctx.author.id}")
-                
-                # Set up timeout
-                asyncio.create_task(handle_selection_timeout(ctx.author.id, ctx))
-                
-                print("🚨 COMMAND HANDLER FINISHED - SHOWING DISAMBIGUATION")
+                    reactions_added += 1
+                    # Small delay between reactions to avoid rate limiting
+                    if i < len(matched_players) - 1:  # Don't delay after the last reaction
+                        await asyncio.sleep(0.2)
+                except Exception as e:
+                    print(f"❌ Failed to add reaction {reactions[i]}: {e}")
+                    break  # Stop adding reactions if we hit an error
+            
+            # If we couldn't add any reactions, clean up and try to delete the message
+            if reactions_added == 0:
+                print("❌ Could not add any reactions, cleaning up")
+                try:
+                    await selection_msg.delete()
+                    await ctx.message.delete()
+                except:
+                    pass
+                error_msg = await ctx.send("❌ Error setting up player selection. Please try again.")
+                await error_msg.delete(delay=5)
                 return
+            
+            # Only store pending selection if we successfully added reactions
+            pending_selections[ctx.author.id] = {
+                "message": selection_msg,
+                "players": matched_players,
+                "original_question": question,
+                "locked": False,
+                "original_user_message": ctx.message,
+                "type": "disambiguation_selection"  # This is for picking which player they meant
+            }
+            
+            print(f"✅ Posted disambiguation selection with {len(matched_players)} options")
+            print(f"✅ Stored pending disambiguation for user {ctx.author.id}")
+            
+            # Set up timeout
+            asyncio.create_task(handle_selection_timeout(ctx.author.id, ctx))
+            
+            print("🚨 COMMAND HANDLER FINISHED - SHOWING DISAMBIGUATION")
+            return
         
-        # Check recent mentions for all matched players
+        # Check recent mentions for all matched players (only if we have a single player or proceeded past disambiguation)
         recent_mentions = await check_recent_player_mentions(ctx.guild, matched_players)
         
         if recent_mentions:
@@ -735,6 +764,11 @@ async def ask_question(ctx, *, question: str = None):
                 print(f"🤔 Multiple players with recent mentions, showing selection")
                 print(f"🤔 Creating selection for {len(recent_mentions)} unique players")
                 
+                # Check if user already has a pending selection to avoid duplicates
+                if ctx.author.id in pending_selections:
+                    print(f"⚠️ User {ctx.author.id} already has a pending selection, skipping duplicate")
+                    return
+                
                 selection_text = "Multiple players have been asked about recently. Which did you mean:\n"
                 reactions = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣"]
                 
@@ -751,15 +785,42 @@ async def ask_question(ctx, *, question: str = None):
                 print(f"🤔 About to post selection message...")
                 
                 # Post selection message
-                selection_msg = await ctx.send(selection_text)
-                print(f"🤔 Posted selection message with ID: {selection_msg.id}")
+                try:
+                    selection_msg = await ctx.send(selection_text)
+                    print(f"🤔 Posted selection message with ID: {selection_msg.id}")
+                except Exception as e:
+                    print(f"❌ Failed to post blocking selection message: {e}")
+                    error_msg = await ctx.send("❌ Error creating player selection. Please try again.")
+                    await error_msg.delete(delay=5)
+                    return
                 
-                # Add reactions
+                # Add reactions with delay to avoid rate limiting
+                reactions_added = 0
                 for i in range(len(recent_mentions)):
-                    await selection_msg.add_reaction(reactions[i])
-                    print(f"🤔 Added reaction {reactions[i]}")
+                    try:
+                        await selection_msg.add_reaction(reactions[i])
+                        print(f"🤔 Added reaction {reactions[i]}")
+                        reactions_added += 1
+                        # Small delay between reactions to avoid rate limiting
+                        if i < len(recent_mentions) - 1:  # Don't delay after the last reaction
+                            await asyncio.sleep(0.2)
+                    except Exception as e:
+                        print(f"❌ Failed to add reaction {reactions[i]}: {e}")
+                        break  # Stop adding reactions if we hit an error
                 
-                # Store pending selection (but for blocking purposes)
+                # If we couldn't add any reactions, clean up and try to delete the message
+                if reactions_added == 0:
+                    print("❌ Could not add any reactions, cleaning up")
+                    try:
+                        await selection_msg.delete()
+                        await ctx.message.delete()
+                    except:
+                        pass
+                    error_msg = await ctx.send("❌ Error setting up player selection. Please try again.")
+                    await error_msg.delete(delay=5)
+                    return
+                
+                # Only store pending selection if we successfully added reactions (but for blocking purposes)
                 pending_selections[ctx.author.id] = {
                     "message": selection_msg,
                     "players": [m["player"] for m in recent_mentions],
