@@ -159,18 +159,34 @@ def fuzzy_match_players(text, max_results=5):
             else:
                 best_similarity = max(similarity, last_name_similarity)
             
-            if best_similarity >= 0.7:  # Lowered threshold for better matching
+            # SMARTER FILTERING: Avoid partial word false positives
+            # If potential name is much longer/shorter than player name, be more strict
+            length_ratio = min(len(potential_name), len(player_name)) / max(len(potential_name), len(player_name))
+            
+            # Adjust threshold based on length similarity and word count
+            if exact_last_name_match:
+                threshold = 0.7  # Keep lower threshold for exact last name matches
+            elif ' ' in player_name and ' ' not in potential_name:
+                # Single word trying to match multi-word name - be stricter unless it's a good last name match
+                threshold = 0.85 if last_name_similarity < 0.9 else 0.7
+            elif length_ratio < 0.6:
+                # Very different lengths (like "invest" vs "vest") - be much stricter
+                threshold = 0.9
+            else:
+                threshold = 0.7
+            
+            if best_similarity >= threshold:
                 matches.append((player, best_similarity))
                 if exact_last_name_match:
                     print(f"🔍 FUZZY MATCH DEBUG: EXACT LAST NAME MATCH - '{potential_name}' = '{player_last_name}' (from {player_name}) = {best_similarity:.3f}")
                 elif last_name_similarity > similarity:
                     print(f"🔍 FUZZY MATCH DEBUG: GOOD LAST NAME MATCH - '{potential_name}' vs '{player_last_name}' (from {player_name}) = {last_name_similarity:.3f}")
                 else:
-                    print(f"🔍 FUZZY MATCH DEBUG: GOOD MATCH - '{potential_name}' vs '{player_name}' = {similarity:.3f}")
+                    print(f"🔍 FUZZY MATCH DEBUG: GOOD MATCH - '{potential_name}' vs '{player_name}' = {similarity:.3f} (threshold: {threshold:.2f})")
             else:
                 # Only log decent attempts to reduce spam
                 if best_similarity >= 0.5:
-                    print(f"🔍 FUZZY MATCH DEBUG: weak match - '{potential_name}' vs '{player_name}' = {best_similarity:.3f}")
+                    print(f"🔍 FUZZY MATCH DEBUG: rejected - '{potential_name}' vs '{player_name}' = {best_similarity:.3f} (threshold: {threshold:.2f})")
     
     if not matches:
         print("🔍 FUZZY MATCH DEBUG: No matches found above threshold")
@@ -296,7 +312,7 @@ def check_player_mentioned(text):
     return None
 
 async def check_recent_player_mentions(guild, players_to_check):
-    """Check if any of the players were mentioned in the last X hours in answering or final channels"""
+    """Check if any of the players were mentioned in the last X hours in bot messages only"""
     import datetime
     
     time_threshold = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=RECENT_MENTION_HOURS)
@@ -309,36 +325,56 @@ async def check_recent_player_mentions(guild, players_to_check):
     for player in players_to_check:
         player_name_lower = player['name'].lower()
         player_uuid = player['uuid'].lower()
-        found_status = None
         
-        # Check final answer channel first (answered)
-        if final_channel and not found_status:
-            try:
-                async for message in final_channel.history(after=time_threshold, limit=RECENT_MENTION_LIMIT):
-                    message_lower = message.content.lower()
-                    if (re.search(rf"\b{re.escape(player_name_lower)}\b", message_lower) or 
-                        player_uuid in message_lower):
-                        print(f"🕒 Found recent mention of {player['name']} in final channel")
-                        found_status = "answered"
-                        break
-            except Exception as e:
-                print(f"❌ Error checking final channel: {e}")
+        # Track where the player was found
+        found_in_answering = False
+        found_in_final = False
         
-        # Check question reposting channel (pending)
-        if answering_channel and not found_status:
+        # Check question reposting channel (answering channel) for BOT messages only
+        if answering_channel:
             try:
                 async for message in answering_channel.history(after=time_threshold, limit=RECENT_MENTION_LIMIT):
-                    message_lower = message.content.lower()
-                    if (re.search(rf"\b{re.escape(player_name_lower)}\b", message_lower) or 
-                        player_uuid in message_lower):
-                        print(f"🕒 Found recent mention of {player['name']} in answering channel")
-                        found_status = "pending"
-                        break
+                    # Only check messages from the bot itself
+                    if message.author == guild.me:  # guild.me is the bot
+                        message_lower = message.content.lower()
+                        if (re.search(rf"\b{re.escape(player_name_lower)}\b", message_lower) or 
+                            player_uuid in message_lower):
+                            print(f"🕒 Found {player['name']} in bot message in answering channel")
+                            found_in_answering = True
+                            break
             except Exception as e:
                 print(f"❌ Error checking answering channel: {e}")
         
-        # Add to results if found (but avoid duplicates by name+team)
-        if found_status:
+        # Check final answer channel for BOT messages only
+        if final_channel:
+            try:
+                async for message in final_channel.history(after=time_threshold, limit=RECENT_MENTION_LIMIT):
+                    # Only check messages from the bot itself
+                    if message.author == guild.me:  # guild.me is the bot
+                        message_lower = message.content.lower()
+                        if (re.search(rf"\b{re.escape(player_name_lower)}\b", message_lower) or 
+                            player_uuid in message_lower):
+                            print(f"🕒 Found {player['name']} in bot message in final channel")
+                            found_in_final = True
+                            break
+            except Exception as e:
+                print(f"❌ Error checking final channel: {e}")
+        
+        # Determine status based on where the player was found
+        status = None
+        if found_in_answering and found_in_final:
+            status = "answered"  # Asked and answered
+            print(f"🕒 {player['name']} found in both channels - status: answered")
+        elif found_in_answering and not found_in_final:
+            status = "pending"   # Asked but not answered
+            print(f"🕒 {player['name']} found only in answering channel - status: pending")
+        elif not found_in_answering and found_in_final:
+            status = "answered"  # Edge case: only in final (shouldn't happen normally)
+            print(f"🕒 {player['name']} found only in final channel - status: answered (edge case)")
+        # If not found in either channel, status remains None (no recent mention)
+        
+        # Add to results if found (avoid duplicates by name+team)
+        if status:
             # Check if we already have this exact player (name + team)
             already_added = False
             for existing in recent_mentions:
@@ -351,9 +387,9 @@ async def check_recent_player_mentions(guild, players_to_check):
             if not already_added:
                 recent_mentions.append({
                     "player": player,
-                    "status": found_status
+                    "status": status
                 })
-                print(f"🕒 Added recent mention: {player['name']} ({player['team']}) - {found_status}")
+                print(f"🕒 Added recent mention: {player['name']} ({player['team']}) - {status}")
     
     return recent_mentions
 
