@@ -4,6 +4,7 @@ import json
 import re
 import os
 import asyncio
+from collections import defaultdict
 
 # -------- CONFIG --------
 SUBMISSION_CHANNEL = "ask-the-experts"
@@ -608,7 +609,6 @@ async def ask_question(ctx, *, question: str = None):
         # Check if we have multiple players with the same name (need disambiguation)
         if len(matched_players) > 1:
             # Group players by name to see if we have same-name players
-            from collections import defaultdict
             players_by_name = defaultdict(list)
             for player in matched_players:
                 players_by_name[player['name'].lower()].append(player)
@@ -809,7 +809,7 @@ async def on_message(message):
                 asker_mention = f"<@{meta['asker_id']}>"
                 expert_name = message.author.display_name
                 # Use dashes for clear visual separation
-                formatted_answer = f"-----\n**Question:**\n{asker_mention} asked: {meta['question']}\n\n**Answer:**\n**{expert_name}** replied:\n{message.content}\n-----"
+                formatted_answer = f"-----\n**Question:**\n{asker_mention} asked: {meta['question']}\n\n**{expert_name}** replied:\n{message.content}\n-----"
                 await final_channel.send(formatted_answer)
                 try:
                     # Fetch the message fresh from Discord to get current content
