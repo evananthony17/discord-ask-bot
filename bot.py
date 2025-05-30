@@ -5,6 +5,9 @@ import re
 import os
 import asyncio
 from collections import defaultdict
+import unicodedata
+from difflib import SequenceMatcher
+from datetime import datetime, timedelta
 
 # -------- CONFIG --------
 SUBMISSION_CHANNEL = "ask-the-experts"
@@ -47,6 +50,159 @@ pending_selections = {}  # user_id: {"message": Message, "players": [...], "orig
 players_data = []  # Will hold the MLB API data
 
 # -------- UTILITY FUNCTIONS --------
+
+def normalize_name(name):
+    """Normalize player names for better matching - handle accents, case, punctuation"""
+    
+    # Remove accents and diacritics (Acuña → Acuna)
+    normalized = unicodedata.normalize('NFD', name)
+    ascii_name = ''.join(c for c in normalized if unicodedata.category(c) != 'Mn')
+    
+    # Convert to lowercase
+    ascii_name = ascii_name.lower()
+    
+    # Remove common punctuation and extra spaces
+    ascii_name = ascii_name.replace('.', '').replace(',', '').replace('-', ' ')
+    ascii_name = ' '.join(ascii_name.split())  # Remove extra whitespace
+    
+    return ascii_name
+
+def is_likely_player_request(text):
+    """Determine if text is likely asking about a player vs casual conversation"""
+    
+    normalized = normalize_name(text)
+    words = normalized.split()
+    
+    # Very short queries are probably not player requests unless they look like names
+    if len(words) == 1 and len(words[0]) <= 4:
+        print(f"🚫 EARLY FILTER: Single short word '{words[0]}' - probably not a player request")
+        return False
+    
+    # Look for obvious non-player patterns
+    casual_patterns = [
+        'more like',       # "update? More like downdate!"
+        'lol',
+        'haha', 
+        'thanks',
+        'thank you',
+        'good job',
+        'nice job', 
+        'well done',
+        'cool',
+        'wow',
+        'yeah',
+        'yes',
+        'no',
+        'ok',
+        'okay',
+        'what the',
+        'wtf',
+        'omg'
+    ]
+    
+    for pattern in casual_patterns:
+        if pattern in normalized:
+            print(f"🚫 EARLY FILTER: Found casual pattern '{pattern}' in '{text}'")
+            return False
+    
+    # If it's a short question with no obvious player name indicators, probably casual
+    if '?' in text and len(words) <= 3:
+        # Check if any words in the original text look like common names (capitalized)
+        original_words = text.split()
+        name_like = False
+        for word in original_words:
+            clean_word = word.strip('.,!?')
+            if len(clean_word) >= 5 and clean_word[0].isupper():  # Capitalized and reasonably long
+                name_like = True
+                break
+        
+        if not name_like:
+            print(f"🚫 EARLY FILTER: Short question '{text}' with no name-like words")
+            return False
+    
+    # Check for made-up words that aren't likely player names
+    common_suffixes = ['date', 'grade', 'side', 'time', 'line', 'ward']
+    made_up_words = []
+    
+    for word in words:
+        if len(word) > 6:  # Only check longer words
+            # Check if it ends with common suffixes but isn't a real name
+            for suffix in common_suffixes:
+                if word.endswith(suffix) and word not in ['update', 'upgrade', 'outside']:
+                    made_up_words.append(word)
+                    print(f"🚫 EARLY FILTER: '{word}' looks like a made-up word (ends with '{suffix}')")
+    
+    # If most of the meaningful words seem made-up, probably not a player request
+    meaningful_words = [w for w in words if len(w) >= 4]
+    if len(meaningful_words) > 0 and len(made_up_words) / len(meaningful_words) > 0.5:
+        print(f"🚫 EARLY FILTER: Too many made-up words ({len(made_up_words)}/{len(meaningful_words)})")
+        return False
+    
+    # If we get here, it might be a player request
+    print(f"✅ EARLY FILTER: '{text}' looks like it could be a player request")
+    return True
+
+def format_time_ago(time_delta):
+    """Format a timedelta object into a human-readable string"""
+    if time_delta.days > 0:
+        return f"{time_delta.days} day{'s' if time_delta.days > 1 else ''}"
+    elif time_delta.seconds > 3600:
+        hours = time_delta.seconds // 3600
+        return f"{hours} hour{'s' if hours > 1 else ''}"
+    elif time_delta.seconds > 60:
+        minutes = time_delta.seconds // 60
+        return f"{minutes} minute{'s' if minutes > 1 else ''}"
+    else:
+        return "just now"
+
+def contains_banned_words(question):
+    """Check if question contains any banned words"""
+    banned_words = ['spam', 'test123', 'ignore']  # Add your banned words here
+    question_lower = question.lower()
+    
+    for word in banned_words:
+        if word in question_lower:
+            return True
+    return False
+
+async def handle_selection_timeout(user_id, ctx):
+    """Handle timeout for player selection"""
+    await asyncio.sleep(SELECTION_TIMEOUT)  # Wait for configured timeout
+    
+    if user_id in pending_selections and not pending_selections[user_id]["locked"]:
+        print(f"🕒 Selection timed out for user {user_id} after {SELECTION_TIMEOUT} seconds")
+        data = pending_selections[user_id]
+        
+        # Clean up selection message
+        try:
+            await data["message"].delete()
+            print("✅ Deleted timed-out selection message")
+        except Exception as e:
+            print(f"❌ Failed to delete timed-out message: {e}")
+        
+        # Clean up original message
+        try:
+            await data["original_user_message"].delete()
+            print("✅ Deleted original user message after timeout")
+        except Exception as e:
+            print(f"❌ Failed to delete original message: {e}")
+        
+        # Remove from pending
+        del pending_selections[user_id]
+        
+        # Handle different timeout types
+        if data.get("type") == "block_selection":
+            print("⏰ Block selection timed out - question blocked by default")
+            return
+        elif data.get("type") == "disambiguation_selection":
+            print("⏰ Disambiguation selection timed out - blocking question")
+            return
+        
+        # Fallback to normal processing (shouldn't happen with current logic)
+        # Note: original message already deleted above, so pass None
+        question = data["original_question"]
+        await process_approved_question(ctx.channel, ctx.author, question, None)
+
 def load_words_from_json(filename):
     try:
         with open(filename, "r", encoding="utf-8") as file:
@@ -91,30 +247,58 @@ def extract_potential_names(text):
     """Extract potential player names from text before fuzzy matching"""
     # Note: Reduced debug logging to minimize console spam
     
+    # Normalize the input text
+    normalized_text = normalize_name(text)
+    
     # Remove common question words and phrases
-    cleaned = text.lower()
-    stop_words = ['how', 'is', 'was', 'are', 'were', 'doing', 'playing', 'performed', 'the', 'a', 'an', 'about', 'what', 'when', 'where', 'why', 'should', 'would', 'could', 'can', 'will', 'today', 'yesterday', 'tomorrow', 'this', 'that', 'these', 'those', 'season', 'year', 'game', 'games']
+    stop_words = {
+        'how', 'is', 'was', 'are', 'were', 'doing', 'playing', 'performed', 
+        'the', 'a', 'an', 'about', 'what', 'when', 'where', 'why', 'who',
+        'should', 'would', 'could', 'can', 'will', 'today', 'yesterday', 
+        'tomorrow', 'this', 'that', 'these', 'those', 'season', 'year', 
+        'game', 'games', 'update', 'on', 'for', 'with', 'any', 'get', 'stats',
+        'more', 'like', 'than', 'then', 'just', 'only', 'also', 'even',
+        'much', 'many', 'some', 'all', 'most', 'best', 'worst', 'better', 'worse'
+    }
     
     # Split into words and remove stop words
-    words = cleaned.split()
+    words = normalized_text.split()
     filtered_words = [w for w in words if w not in stop_words and len(w) > 1]
     
     # Try to find name combinations (first + last name patterns)
     potential_names = []
     
-    # Look for 2-word combinations that might be names
+    # Look for 2-word combinations that might be names (like "Christian Moore")
     for i in range(len(filtered_words) - 1):
         name_combo = f"{filtered_words[i]} {filtered_words[i+1]}"
-        if len(name_combo) >= 6:  # Minimum reasonable name length
+        if len(name_combo) >= 4:  # Lowered from 5 to catch shorter names
             potential_names.append(name_combo)
     
-    # Also add individual words that might be last names
+    # Look for 3-word combinations (like "Juan Soto Jr")
+    for i in range(len(filtered_words) - 2):
+        name_combo = f"{filtered_words[i]} {filtered_words[i+1]} {filtered_words[i+2]}"
+        if len(name_combo) >= 7:  # Lowered from 8
+            potential_names.append(name_combo)
+    
+    # Also add individual words that might be last names (but filter out obvious non-names)
+    non_name_words = {
+        'stats', 'news', 'info', 'question', 'playing', 'game', 'season', 'year', 'team',
+        'downdate', 'upgrade', 'downgrade', 'update', 'like', 'more', 'less', 'better', 'worse',
+        'good', 'bad', 'nice', 'cool', 'awesome', 'great', 'terrible', 'amazing', 'fantastic',
+        'horrible', 'perfect', 'awful', 'wonderful', 'excellent', 'outstanding', 'impressive'
+    }
     for word in filtered_words:
-        if len(word) >= 3:
+        if len(word) >= 3 and word not in non_name_words:
             potential_names.append(word)
     
-    # Add the original text as fallback
-    potential_names.append(text.lower())
+    # Special case: if the input is very short and simple, add it directly
+    if len(words) <= 2 and all(len(w) >= 3 for w in words):
+        original_simple = ' '.join(words)
+        if original_simple not in potential_names:
+            potential_names.append(original_simple)
+    
+    # Add the original text as fallback (normalized)
+    potential_names.append(normalized_text)
     
     print(f"🔍 NAME EXTRACTION: Found {len(potential_names)} potential names from '{text}'")
     return potential_names
@@ -274,6 +458,11 @@ def check_player_mentioned(text):
     
     if not players_data:
         print("🔍 CHECK PLAYER DEBUG: No players data available")
+        return None
+    
+    # Apply early filter first
+    if not is_likely_player_request(text):
+        print(f"🚫 EARLY FILTER: '{text}' doesn't look like a player request - ignoring")
         return None
     
     # First, do a simple direct search for debugging
@@ -447,43 +636,20 @@ async def process_approved_question(channel, user, question, original_message=No
         error_msg = await channel.send(f"❌ Could not find #{ANSWERING_CHANNEL}")
         await error_msg.delete(delay=5)
 
-async def handle_selection_timeout(user_id, ctx):
-    """Handle timeout for player selection"""
-    await asyncio.sleep(SELECTION_TIMEOUT)  # Wait for configured timeout
+async def handle_player_mention(message):
+    """Main handler for processing potential player mentions"""
+    question = message.content.strip()
     
-    if user_id in pending_selections and not pending_selections[user_id]["locked"]:
-        print(f"🕒 Selection timed out for user {user_id} after {SELECTION_TIMEOUT} seconds")
-        data = pending_selections[user_id]
+    if not question:
+        return
         
-        # Clean up selection message
-        try:
-            await data["message"].delete()
-            print("✅ Deleted timed-out selection message")
-        except Exception as e:
-            print(f"❌ Failed to delete timed-out message: {e}")
-        
-        # Clean up original message
-        try:
-            await data["original_user_message"].delete()
-            print("✅ Deleted original user message after timeout")
-        except Exception as e:
-            print(f"❌ Failed to delete original message: {e}")
-        
-        # Remove from pending
-        del pending_selections[user_id]
-        
-        # Handle different timeout types
-        if data.get("type") == "block_selection":
-            print("⏰ Block selection timed out - question blocked by default")
-            return
-        elif data.get("type") == "disambiguation_selection":
-            print("⏰ Disambiguation selection timed out - blocking question")
-            return
-        
-        # Fallback to normal processing (shouldn't happen with current logic)
-        # Note: original message already deleted above, so pass None
-        question = data["original_question"]
-        await process_approved_question(ctx.channel, ctx.author, question, None)
+    # Check if this looks like a player request at all
+    if not is_likely_player_request(question):
+        print(f"🚫 EARLY FILTER: '{question}' doesn't look like a player request - ignoring")
+        return
+    
+    # Continue with processing if it looks like a player request
+    print(f"✅ Processing potential player mention: {question}")
 
 # -------- EVENTS --------
 @bot.event
@@ -533,6 +699,109 @@ async def on_ready():
     except Exception as e:
         print(f"❌ ERROR IN ON_READY: {e}")
         raise e
+
+@bot.event  
+async def on_message(message):
+    # Ignore messages from the bot itself
+    if message.author.bot:
+        return
+    
+    # Only process messages in specific channels we care about
+    relevant_channels = [SUBMISSION_CHANNEL, ANSWERING_CHANNEL, FINAL_ANSWER_CHANNEL]
+    
+    if message.channel.name not in relevant_channels:
+        # Ignore messages in channels we don't care about
+        return
+    
+    print(f"📨 Message received in #{message.channel.name}: {message.content[:50]}...")
+
+    # Handle submission channel - block non-commands only
+    if message.channel.name == SUBMISSION_CHANNEL:
+        # For !ask commands, do NOTHING here - let Discord.py process them naturally
+        if message.content.startswith("!ask"):
+            print("📝 !ask command detected - will be processed by Discord.py naturally")
+            # DO NOT call bot.process_commands here - it will be called at the end
+        else:
+            # Block everything else: regular text, emojis, server emotes, attachments, etc.
+            print(f"🚫 Blocking non-command message in {SUBMISSION_CHANNEL}: '{message.content}'")
+            print(f"📎 Attachments: {len(message.attachments)}")
+            
+            # Delete the original message first
+            try:
+                await message.delete()
+                print("✅ Original message deleted")
+            except Exception as e:
+                print(f"❌ Failed to delete message: {e}")
+            
+            error_msg = await message.channel.send(
+                f"Only the `!ask` command is allowed in #{SUBMISSION_CHANNEL}."
+            )
+            await error_msg.delete(delay=5)
+            # Don't process commands for blocked messages
+            return
+
+    # Handle expert answers (only in answering channel)
+    elif message.channel.name == ANSWERING_CHANNEL and message.reference:
+        print(f"🔍 Checking for referenced message in {ANSWERING_CHANNEL}")
+        referenced = message.reference.resolved
+        if referenced and referenced.id in question_map:
+            print(f"✅ Found matching question, moving to final channel")
+            meta = question_map.pop(referenced.id)
+            final_channel = discord.utils.get(message.guild.text_channels, name=FINAL_ANSWER_CHANNEL)
+
+            if final_channel:
+                asker_mention = f"<@{meta['asker_id']}>"
+                expert_name = message.author.display_name
+                # Use dashes for clear visual separation
+                formatted_answer = f"-----\n**Question:**\n{asker_mention} asked: {meta['question']}\n\n**{expert_name}** replied:\n{message.content}\n-----"
+                await final_channel.send(formatted_answer)
+                try:
+                    # Fetch the message fresh from Discord to get current content
+                    fresh_message = await message.channel.fetch_message(referenced.id)
+                    original_content = fresh_message.content
+                    print(f"🔍 Original content: {repr(original_content)}")
+                    
+                    # Replace the red exclamation and "Not Answered" with green check and "Answered"
+                    # Also remove the "Reply to this message to answer" line
+                    if "❗ **Not Answered**\n\nReply to this message to answer." in original_content:
+                        updated_content = original_content.replace("❗ **Not Answered**\n\nReply to this message to answer.", "✅ **Answered**")
+                        print("🔧 Replaced full section with reply instruction")
+                    elif "❗ **Not Answered**\n" in original_content:
+                        updated_content = original_content.replace("❗ **Not Answered**\n", "✅ **Answered**\n")
+                        # Also remove the reply instruction if it exists separately
+                        updated_content = updated_content.replace("\nReply to this message to answer.", "")
+                        updated_content = updated_content.replace("Reply to this message to answer.", "")
+                        print("🔧 Replaced with newline version and removed reply instruction")
+                    elif "❗ **Not Answered**" in original_content:
+                        updated_content = original_content.replace("❗ **Not Answered**", "✅ **Answered**")
+                        # Also remove the reply instruction if it exists separately
+                        updated_content = updated_content.replace("\nReply to this message to answer.", "")
+                        updated_content = updated_content.replace("Reply to this message to answer.", "")
+                        print("🔧 Replaced without newline version and removed reply instruction")
+                    else:
+                        # Fallback: append the answered status
+                        updated_content = original_content + "\n\n✅ **Answered**\n"
+                        print("🔧 Used fallback append method")
+                    
+                    print(f"🔍 Updated content: {repr(updated_content)}")
+                    
+                    # Check if content actually changed
+                    if updated_content != original_content:
+                        await fresh_message.edit(content=updated_content)
+                        print("✅ Updated original message with answered status")
+                    else:
+                        print("⚠️ No changes detected in content")
+                        
+                except Exception as e:
+                    print(f"❌ Failed to edit original message: {e}")
+                    print(f"❌ Error details: {type(e).__name__}: {str(e)}")
+            else:
+                print(f"❌ Could not find #{FINAL_ANSWER_CHANNEL}")
+        else:
+            print("❌ No matching question found in question_map")
+    
+    # Process commands ONCE at the end for ALL messages
+    await bot.process_commands(message)
 
 # -------- PREFIX COMMAND: !ask --------
 @bot.command(name="ask")
@@ -756,7 +1025,7 @@ async def ask_question(ctx, *, question: str = None):
                     error_msg = await ctx.send("This player has been asked about recently, please be patient and wait for an answer.")
                 
                 await error_msg.delete(delay=8)
-                print("🚨 COMMAND HANDLER FINISHED - BLOCKED RECENT MENTION")
+                print("🚨 COMMAND HANDLER FINISHED - BLOCKED REPEAT")
                 return
             
             # Multiple players with recent mentions - show selection dialog
@@ -852,109 +1121,6 @@ async def ask_question(ctx, *, question: str = None):
     await process_approved_question(ctx.channel, ctx.author, question, ctx.message)
         
     print("🚨 COMMAND HANDLER FINISHED - NORMAL PROCESSING")
-
-# -------- MESSAGE LISTENER --------
-@bot.event
-async def on_message(message):
-    if message.author.bot:
-        return
-    
-    # Only process messages in specific channels we care about
-    relevant_channels = [SUBMISSION_CHANNEL, ANSWERING_CHANNEL, FINAL_ANSWER_CHANNEL]
-    
-    if message.channel.name not in relevant_channels:
-        # Ignore messages in channels we don't care about
-        return
-    
-    print(f"📨 Message received in #{message.channel.name}: {message.content[:50]}...")
-
-    # Handle submission channel - block non-commands only
-    if message.channel.name == SUBMISSION_CHANNEL:
-        # For !ask commands, do NOTHING here - let Discord.py process them naturally
-        if message.content.startswith("!ask"):
-            print("📝 !ask command detected - will be processed by Discord.py naturally")
-            # DO NOT call bot.process_commands here - it will be called at the end
-        else:
-            # Block everything else: regular text, emojis, server emotes, attachments, etc.
-            print(f"🚫 Blocking non-command message in {SUBMISSION_CHANNEL}: '{message.content}'")
-            print(f"📎 Attachments: {len(message.attachments)}")
-            
-            # Delete the original message first
-            try:
-                await message.delete()
-                print("✅ Original message deleted")
-            except Exception as e:
-                print(f"❌ Failed to delete message: {e}")
-            
-            error_msg = await message.channel.send(
-                f"Only the `!ask` command is allowed in #{SUBMISSION_CHANNEL}."
-            )
-            await error_msg.delete(delay=5)
-            # Don't process commands for blocked messages
-            return
-
-    # Handle expert answers (only in answering channel)
-    elif message.channel.name == ANSWERING_CHANNEL and message.reference:
-        print(f"🔍 Checking for referenced message in {ANSWERING_CHANNEL}")
-        referenced = message.reference.resolved
-        if referenced and referenced.id in question_map:
-            print(f"✅ Found matching question, moving to final channel")
-            meta = question_map.pop(referenced.id)
-            final_channel = discord.utils.get(message.guild.text_channels, name=FINAL_ANSWER_CHANNEL)
-
-            if final_channel:
-                asker_mention = f"<@{meta['asker_id']}>"
-                expert_name = message.author.display_name
-                # Use dashes for clear visual separation
-                formatted_answer = f"-----\n**Question:**\n{asker_mention} asked: {meta['question']}\n\n**{expert_name}** replied:\n{message.content}\n-----"
-                await final_channel.send(formatted_answer)
-                try:
-                    # Fetch the message fresh from Discord to get current content
-                    fresh_message = await message.channel.fetch_message(referenced.id)
-                    original_content = fresh_message.content
-                    print(f"🔍 Original content: {repr(original_content)}")
-                    
-                    # Replace the red exclamation and "Not Answered" with green check and "Answered"
-                    # Also remove the "Reply to this message to answer" line
-                    if "❗ **Not Answered**\n\nReply to this message to answer." in original_content:
-                        updated_content = original_content.replace("❗ **Not Answered**\n\nReply to this message to answer.", "✅ **Answered**")
-                        print("🔧 Replaced full section with reply instruction")
-                    elif "❗ **Not Answered**\n" in original_content:
-                        updated_content = original_content.replace("❗ **Not Answered**\n", "✅ **Answered**\n")
-                        # Also remove the reply instruction if it exists separately
-                        updated_content = updated_content.replace("\nReply to this message to answer.", "")
-                        updated_content = updated_content.replace("Reply to this message to answer.", "")
-                        print("🔧 Replaced with newline version and removed reply instruction")
-                    elif "❗ **Not Answered**" in original_content:
-                        updated_content = original_content.replace("❗ **Not Answered**", "✅ **Answered**")
-                        # Also remove the reply instruction if it exists separately
-                        updated_content = updated_content.replace("\nReply to this message to answer.", "")
-                        updated_content = updated_content.replace("Reply to this message to answer.", "")
-                        print("🔧 Replaced without newline version and removed reply instruction")
-                    else:
-                        # Fallback: append the answered status
-                        updated_content = original_content + "\n\n✅ **Answered**\n"
-                        print("🔧 Used fallback append method")
-                    
-                    print(f"🔍 Updated content: {repr(updated_content)}")
-                    
-                    # Check if content actually changed
-                    if updated_content != original_content:
-                        await fresh_message.edit(content=updated_content)
-                        print("✅ Updated original message with answered status")
-                    else:
-                        print("⚠️ No changes detected in content")
-                        
-                except Exception as e:
-                    print(f"❌ Failed to edit original message: {e}")
-                    print(f"❌ Error details: {type(e).__name__}: {str(e)}")
-            else:
-                print(f"❌ Could not find #{FINAL_ANSWER_CHANNEL}")
-        else:
-            print("❌ No matching question found in question_map")
-    
-    # Process commands ONCE at the end for ALL messages
-    await bot.process_commands(message)
 
 # -------- REACTION HANDLER FOR PLAYER SELECTION --------
 @bot.event
