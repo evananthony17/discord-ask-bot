@@ -1312,6 +1312,12 @@ async def on_reaction_add(reaction, user):
                         )
                     
                     await error_msg.delete(delay=8)
+                    # Delete the original user message as well
+                    try:
+                        await selection_data["original_user_message"].delete()
+                        print("✅ Deleted original user message after blocking")
+                    except Exception as e:
+                        print(f"❌ Failed to delete original user message: {e}")
                     return
             
             elif selection_data.get("type") == "disambiguation_selection":
@@ -1337,6 +1343,12 @@ async def on_reaction_add(reaction, user):
                         )
                     
                     await error_msg.delete(delay=8)
+                    # Delete the original user message as well
+                    try:
+                        await selection_data["original_user_message"].delete()
+                        print("✅ Deleted original user message after blocking disambiguation")
+                    except Exception as e:
+                        print(f"❌ Failed to delete original user message: {e}")
                     return
                 else:
                     # No recent mentions - proceed with the question, adding selected player info
