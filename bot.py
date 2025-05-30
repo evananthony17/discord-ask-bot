@@ -303,6 +303,32 @@ def extract_potential_names(text):
     print(f"🔍 NAME EXTRACTION: Found {len(potential_names)} potential names from '{text}'")
     return potential_names
 
+def check_last_name_match(potential_name, player_name):
+    """Special checking for single-word inputs that might be last names"""
+    if ' ' in potential_name:  # Only for single words
+        return None, False
+    
+    if len(potential_name) < 3 or len(potential_name) > 12:  # Reasonable last name length
+        return None, False
+    
+    # Get the player's last name
+    name_parts = player_name.split()
+    if len(name_parts) < 2:
+        return None, False
+    
+    player_last_name = name_parts[-1]
+    
+    # Check for very close last name match
+    from difflib import SequenceMatcher
+    similarity = SequenceMatcher(None, potential_name, player_last_name).ratio()
+    
+    # Special case: if it's a very close match to a last name, be more lenient
+    if similarity >= 0.75:  # Lower threshold for last name only
+        print(f"🎯 LAST NAME MATCH: '{potential_name}' vs last name '{player_last_name}' = {similarity:.3f}")
+        return similarity, True
+    
+    return None, False
+
 def fuzzy_match_players(text, max_results=5):
     """Fuzzy match player names in text and return top matches - IMPROVED VERSION"""
     from difflib import SequenceMatcher
@@ -325,8 +351,18 @@ def fuzzy_match_players(text, max_results=5):
             print(f"🔍 FUZZY MATCH DEBUG: Trying potential name: '{potential_name}'")
         
         for player in players_data:
-            player_name = player['name'].lower()
+            player_name = normalize_name(player['name'])  # ← NORMALIZE DATABASE NAMES TOO
             
+            # First check for special last name match
+            lastname_sim, is_lastname_match = check_last_name_match(potential_name, player_name)
+            
+            if is_lastname_match and lastname_sim >= 0.75:
+                # Special last name match - use more lenient threshold
+                matches.append((player, lastname_sim))
+                print(f"🎯 LAST NAME SPECIAL MATCH: '{potential_name}' matched {player['name']} (last name score: {lastname_sim:.3f})")
+                continue
+            
+            # Regular fuzzy matching
             # Calculate similarity
             similarity = SequenceMatcher(None, potential_name, player_name).ratio()
             
@@ -383,6 +419,19 @@ def fuzzy_match_players(text, max_results=5):
                 if best_similarity >= 0.75:  # Increased threshold from 0.5 to reduce logging
                     print(f"🔍 FUZZY MATCH DEBUG: rejected - '{potential_name}' vs '{player_name}' = {best_similarity:.3f} (threshold: {threshold:.2f})")
     
+    # If no matches found but the text looks like a player name, do a fallback recent mentions check
+    if not matches and is_likely_player_request(text):
+        # Check if any single word in the input might be a player reference
+        normalized_text = normalize_name(text)
+        words = normalized_text.split()
+        potential_player_words = [w for w in words if len(w) >= 4 and w not in {
+            'playing', 'projection', 'stats', 'performance', 'update', 'news', 'info'
+        }]
+        
+        if potential_player_words:
+            print(f"🔍 FUZZY MATCH DEBUG: No strict matches found, but detected potential player words: {potential_player_words}")
+            print(f"🔍 FUZZY MATCH DEBUG: Will trigger fallback recent mentions check")
+    
     if not matches:
         print("🔍 FUZZY MATCH DEBUG: No matches found above threshold")
         return []
@@ -395,8 +444,8 @@ def fuzzy_match_players(text, max_results=5):
     unique_matches = []
     
     for player, score in matches:
-        # Create unique identifier using both name and team
-        player_key = f"{player['name'].lower()}|{player['team'].lower()}"
+        # Create unique identifier using both name and team (NORMALIZED)
+        player_key = f"{normalize_name(player['name'])}|{normalize_name(player['team'])}"
         if player_key not in seen_players:
             unique_matches.append(player)
             seen_players.add(player_key)
@@ -465,14 +514,14 @@ def check_player_mentioned(text):
         print(f"🚫 EARLY FILTER: '{text}' doesn't look like a player request - ignoring")
         return None
     
-    # First, do a simple direct search for debugging
-    text_lower = text.lower()
+    # First, do a simple direct search for debugging - NORMALIZE BOTH SIDES
+    text_normalized = normalize_name(text)
     direct_matches = []
     for player in players_data:
-        player_name_lower = player['name'].lower()
-        if player_name_lower in text_lower:
+        player_name_normalized = normalize_name(player['name'])
+        if player_name_normalized in text_normalized:
             direct_matches.append(player)
-            print(f"🔍 CHECK PLAYER DEBUG: DIRECT MATCH found: {player['name']} ({player['team']})")
+            print(f"🔍 CHECK PLAYER DEBUG: DIRECT MATCH found: {player['name']} ({player['team']}) - normalized: '{player_name_normalized}' in '{text_normalized}'")
     
     print(f"🔍 CHECK PLAYER DEBUG: Found {len(direct_matches)} total direct matches")
     
@@ -482,8 +531,8 @@ def check_player_mentioned(text):
         seen_players = set()
         unique_direct = []
         for player in direct_matches:
-            # Create unique identifier using both name and team
-            player_key = f"{player['name'].lower()}|{player['team'].lower()}"
+            # Create unique identifier using both name and team (NORMALIZED)
+            player_key = f"{normalize_name(player['name'])}|{normalize_name(player['team'])}"
             if player_key not in seen_players:
                 unique_direct.append(player)
                 seen_players.add(player_key)
@@ -523,7 +572,7 @@ async def check_recent_player_mentions(guild, players_to_check):
     answering_channel = discord.utils.get(guild.text_channels, name=ANSWERING_CHANNEL)
     
     for player in players_to_check:
-        player_name_lower = player['name'].lower()
+        player_name_normalized = normalize_name(player['name'])
         player_uuid = player['uuid'].lower()
         
         # Track where the player was found
@@ -536,9 +585,9 @@ async def check_recent_player_mentions(guild, players_to_check):
                 async for message in answering_channel.history(after=time_threshold, limit=RECENT_MENTION_LIMIT):
                     # Only check messages from the bot itself
                     if message.author == guild.me:  # guild.me is the bot
-                        message_lower = message.content.lower()
-                        if (re.search(rf"\b{re.escape(player_name_lower)}\b", message_lower) or 
-                            player_uuid in message_lower):
+                        message_normalized = normalize_name(message.content)
+                        if (re.search(rf"\b{re.escape(player_name_normalized)}\b", message_normalized) or 
+                            player_uuid in message_normalized):
                             print(f"🕒 Found {player['name']} in bot message in answering channel")
                             found_in_answering = True
                             break
@@ -551,9 +600,9 @@ async def check_recent_player_mentions(guild, players_to_check):
                 async for message in final_channel.history(after=time_threshold, limit=RECENT_MENTION_LIMIT):
                     # Only check messages from the bot itself
                     if message.author == guild.me:  # guild.me is the bot
-                        message_lower = message.content.lower()
-                        if (re.search(rf"\b{re.escape(player_name_lower)}\b", message_lower) or 
-                            player_uuid in message_lower):
+                        message_normalized = normalize_name(message.content)
+                        if (re.search(rf"\b{re.escape(player_name_normalized)}\b", message_normalized) or 
+                            player_uuid in message_normalized):
                             print(f"🕒 Found {player['name']} in bot message in final channel")
                             found_in_final = True
                             break
@@ -575,11 +624,11 @@ async def check_recent_player_mentions(guild, players_to_check):
         
         # Add to results if found (avoid duplicates by name+team)
         if status:
-            # Check if we already have this exact player (name + team)
+            # Check if we already have this exact player (name + team) - NORMALIZED
             already_added = False
             for existing in recent_mentions:
-                if (existing["player"]["name"].lower() == player["name"].lower() and 
-                    existing["player"]["team"].lower() == player["team"].lower()):
+                if (normalize_name(existing["player"]["name"]) == normalize_name(player["name"]) and 
+                    normalize_name(existing["player"]["team"]) == normalize_name(player["team"])):
                     already_added = True
                     print(f"🕒 Skipping duplicate recent mention for {player['name']} ({player['team']})")
                     break
@@ -917,6 +966,20 @@ async def ask_question(ctx, *, question: str = None):
     matched_players = check_player_mentioned(question)
     print(f"🔍 Fuzzy matching returned: {matched_players}")
     
+    # If no player matched but question looks like a player request, do fallback recent mentions check
+    fallback_recent_check = False
+    if not matched_players and is_likely_player_request(question):
+        normalized_text = normalize_name(question)
+        words = normalized_text.split()
+        potential_player_words = [w for w in words if len(w) >= 4 and w not in {
+            'playing', 'projection', 'stats', 'performance', 'update', 'news', 'info', 'question', 'about'
+        }]
+        
+        if potential_player_words:
+            print(f"🔍 FALLBACK: No player matched, but found potential player words: {potential_player_words}")
+            print(f"🔍 FALLBACK: Will check recent mentions for these terms")
+            fallback_recent_check = True
+    
     if matched_players:
         print(f"🎯 Found {len(matched_players)} potential player matches")
         for player in matched_players:
@@ -1111,6 +1174,65 @@ async def ask_question(ctx, *, question: str = None):
         
         # No recent mentions found - continue with normal processing
         print("✅ No recent mentions found, continuing with normal question processing")
+    elif fallback_recent_check:
+        # Fallback: check recent mentions using the potential player words
+        print(f"🔍 FALLBACK: Checking recent mentions for potential player terms")
+        
+        # Search recent bot messages for any of the potential player words
+        answering_channel = discord.utils.get(ctx.guild.text_channels, name=ANSWERING_CHANNEL)
+        final_channel = discord.utils.get(ctx.guild.text_channels, name=FINAL_ANSWER_CHANNEL)
+        
+        import datetime
+        time_threshold = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=RECENT_MENTION_HOURS)
+        
+        found_recent_mention = False
+        
+        for word in potential_player_words:
+            if found_recent_mention:
+                break
+                
+            # Check answering channel
+            if answering_channel:
+                try:
+                    async for message in answering_channel.history(after=time_threshold, limit=RECENT_MENTION_LIMIT):
+                        if message.author == ctx.guild.me:
+                            message_normalized = normalize_name(message.content)
+                            if word in message_normalized:
+                                print(f"🕒 FALLBACK: Found '{word}' in recent bot message in answering channel")
+                                found_recent_mention = True
+                                break
+                except Exception as e:
+                    print(f"❌ FALLBACK: Error checking answering channel: {e}")
+            
+            # Check final channel
+            if final_channel and not found_recent_mention:
+                try:
+                    async for message in final_channel.history(after=time_threshold, limit=RECENT_MENTION_LIMIT):
+                        if message.author == ctx.guild.me:
+                            message_normalized = normalize_name(message.content)
+                            if word in message_normalized:
+                                print(f"🕒 FALLBACK: Found '{word}' in recent bot message in final channel")
+                                found_recent_mention = True
+                                break
+                except Exception as e:
+                    print(f"❌ FALLBACK: Error checking final channel: {e}")
+        
+        if found_recent_mention:
+            print(f"🚫 FALLBACK: Found recent mention of player terms - blocking question")
+            
+            # Delete the user's message first
+            try:
+                await ctx.message.delete()
+                print("✅ Deleted user's message - recent mention found via fallback")
+            except Exception as e:
+                print(f"❌ Failed to delete user's message: {e}")
+            
+            error_msg = await ctx.send("This topic has been asked about recently, please be patient and wait for an answer.")
+            await error_msg.delete(delay=8)
+            print("🚨 COMMAND HANDLER FINISHED - BLOCKED VIA FALLBACK")
+            return
+        else:
+            print("✅ FALLBACK: No recent mentions found, continuing with normal question processing")
     else:
         print("🔍 No player matches found")
 
