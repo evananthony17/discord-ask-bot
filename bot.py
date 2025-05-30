@@ -8,6 +8,81 @@ from collections import defaultdict
 import unicodedata
 from difflib import SequenceMatcher
 from datetime import datetime, timedelta
+import aiohttp
+
+# Configuration
+DISCORD_TOKEN = os.environ.get("DISCORD_TOKEN")
+WEBHOOK_LOGS_URL = os.environ.get("WEBHOOK_LOGS_URL", "")  # Discord webhook for logs
+LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")  # DEBUG, INFO, WARNING, ERROR
+
+# Log levels
+LOG_LEVELS = {
+    "DEBUG": 0,
+    "INFO": 1, 
+    "WARNING": 2,
+    "ERROR": 3
+}
+
+async def log_to_discord(level, message, details=None):
+    """Send logs to Discord webhook"""
+    if not WEBHOOK_LOGS_URL:
+        return  # No webhook configured
+    
+    # Check if we should log this level
+    current_level = LOG_LEVELS.get(LOG_LEVEL, 1)
+    msg_level = LOG_LEVELS.get(level, 1)
+    
+    if msg_level < current_level:
+        return  # Log level too low
+    
+    # Color coding for different log levels
+    colors = {
+        "DEBUG": 0x808080,    # Gray
+        "INFO": 0x0099ff,     # Blue  
+        "WARNING": 0xff9900,  # Orange
+        "ERROR": 0xff0000     # Red
+    }
+    
+    embed = {
+        "title": f"{level} - Baseball Bot",
+        "description": f"```{message}```",
+        "color": colors.get(level, 0x0099ff),
+        "timestamp": datetime.utcnow().isoformat(),
+        "footer": {"text": f"Level: {level}"}
+    }
+    
+    if details:
+        embed["fields"] = [{"name": "Details", "value": f"```{details}```", "inline": False}]
+    
+    payload = {"embeds": [embed]}
+    
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(WEBHOOK_LOGS_URL, json=payload) as response:
+                if response.status != 204:
+                    print(f"❌ Failed to send log to Discord: {response.status}")
+    except Exception as e:
+        print(f"❌ Error sending log to Discord: {e}")
+
+def log_debug(message, details=None):
+    """Log debug message"""
+    print(f"🔍 DEBUG: {message}")
+    asyncio.create_task(log_to_discord("DEBUG", message, details))
+
+def log_info(message, details=None):
+    """Log info message"""
+    print(f"ℹ️ INFO: {message}")
+    asyncio.create_task(log_to_discord("INFO", message, details))
+
+def log_warning(message, details=None):
+    """Log warning message"""
+    print(f"⚠️ WARNING: {message}")
+    asyncio.create_task(log_to_discord("WARNING", message, details))
+
+def log_error(message, details=None):
+    """Log error message"""
+    print(f"❌ ERROR: {message}")
+    asyncio.create_task(log_to_discord("ERROR", message, details))
 
 # -------- CONFIG --------
 SUBMISSION_CHANNEL = "ask-the-experts"
@@ -48,6 +123,7 @@ pending_selections = {}  # user_id: {"message": Message, "players": [...], "orig
 
 # -------- PLAYER NAMES --------
 players_data = []  # Will hold the MLB API data
+player_nicknames = {}  # Global variable to store loaded nicknames
 
 # -------- UTILITY FUNCTIONS --------
 
@@ -80,16 +156,15 @@ def load_nicknames_from_json(filename):
                 loaded_nicknames = json.load(f)
                 # Convert all keys to lowercase for case-insensitive matching
                 player_nicknames = {k.lower(): v.lower() for k, v in loaded_nicknames.items()}
-                print(f"✅ Nicknames loaded from {filename}: {len(player_nicknames)} nicknames")
+                log_info(f"NICKNAMES: Loaded from {filename}: {len(player_nicknames)} nicknames")
                 
                 # Show a few examples for verification
                 if player_nicknames:
                     examples = list(player_nicknames.items())[:5]
-                    print(f"🏷️ Example nicknames: {examples}")
+                    log_debug(f"NICKNAMES: Example mappings: {examples}")
                 return True
         else:
-            print(f"❌ Nicknames file not found: {filename}")
-            print("🏷️ Creating example nicknames.json file...")
+            log_warning(f"NICKNAMES: File not found: {filename} - creating example file")
             
             # Create example file with common nicknames
             example_nicknames = {
@@ -127,30 +202,34 @@ def load_nicknames_from_json(filename):
             
             # Load the newly created file
             player_nicknames = {k.lower(): v.lower() for k, v in example_nicknames.items()}
-            print(f"✅ Created and loaded example {filename} with {len(player_nicknames)} nicknames")
+            log_info(f"NICKNAMES: Created and loaded example {filename} with {len(player_nicknames)} nicknames")
             return True
             
     except Exception as e:
-        print(f"❌ Error loading nicknames from {filename}: {e}")
-        print("🏷️ Continuing without nicknames...")
+        log_error(f"NICKNAMES: Error loading from {filename}: {e}")
         player_nicknames = {}
         return False
 
 def expand_nicknames(text):
     """Convert common baseball nicknames to full player names"""
+    log_debug(f"NICKNAME: Input text: '{text}', Available nicknames: {len(player_nicknames)}")
+    
     if not player_nicknames:
+        log_debug("NICKNAME: No nicknames loaded - returning original text")
         return text  # No nicknames loaded
         
     text_lower = text.lower().strip()
+    log_debug(f"NICKNAME: Normalized input: '{text_lower}'")
     
     # Check for exact nickname matches
     if text_lower in player_nicknames:
         expanded_name = player_nicknames[text_lower]
-        print(f"🏷️ NICKNAME EXPANSION: '{text}' → '{expanded_name}'")
+        log_info(f"NICKNAME EXPANSION: '{text}' → '{expanded_name}'")
         return expanded_name
     
     # Check for nicknames within the text
     words = text_lower.split()
+    log_debug(f"NICKNAME: Split into words: {words}")
     expanded_words = []
     nickname_found = False
     
@@ -159,13 +238,17 @@ def expand_nicknames(text):
             expanded_name = player_nicknames[word]
             expanded_words.append(expanded_name)
             nickname_found = True
-            print(f"🏷️ NICKNAME EXPANSION: '{word}' in '{text}' → '{expanded_name}'")
+            log_info(f"NICKNAME EXPANSION: '{word}' in '{text}' → '{expanded_name}'")
         else:
             expanded_words.append(word)
+            log_debug(f"NICKNAME: No match for word '{word}'")
     
     if nickname_found:
-        return ' '.join(expanded_words)
+        result = ' '.join(expanded_words)
+        log_info(f"NICKNAME RESULT: '{text}' → '{result}'")
+        return result
     
+    log_debug(f"NICKNAME: No nicknames found in '{text}' - returning original")
     return text  # No nicknames found, return original
 
 def is_likely_player_request(text):
@@ -345,11 +428,15 @@ def load_players_from_json(filename):
         return []
 
 def extract_potential_names(text):
-    """Extract potential player names from text before fuzzy matching"""
-    # Note: Reduced debug logging to minimize console spam
+    """Extract potential player names from text with improved logic"""
+    # First expand nicknames
+    expanded_text = expand_nicknames(text)
+    if expanded_text != text:
+        print(f"🔍 NAME EXTRACTION: Expanded '{text}' to '{expanded_text}'")
+        text = expanded_text
     
-    # Normalize the input text
-    normalized_text = normalize_name(text)
+    text_normalized = normalize_name(text)
+    potential_names = []
     
     # Remove common question words and phrases
     stop_words = {
@@ -363,11 +450,10 @@ def extract_potential_names(text):
     }
     
     # Split into words and remove stop words
-    words = normalized_text.split()
+    words = text_normalized.split()
     filtered_words = [w for w in words if w not in stop_words and len(w) > 1]
     
     # Try to find name combinations (first + last name patterns)
-    potential_names = []
     
     # Look for 2-word combinations that might be names (like "Christian Moore")
     for i in range(len(filtered_words) - 1):
@@ -399,7 +485,7 @@ def extract_potential_names(text):
             potential_names.append(original_simple)
     
     # Add the original text as fallback (normalized)
-    potential_names.append(normalized_text)
+    potential_names.append(text_normalized)
     
     print(f"🔍 NAME EXTRACTION: Found {len(potential_names)} potential names from '{text}'")
     return potential_names
@@ -897,44 +983,27 @@ async def on_ready():
         # Load player data
         global players_data
         players_data = load_players_from_json("players.json")
-        print(f"✅ Player list loaded: {len(players_data)} players")
+        log_info(f"STARTUP: Player list loaded: {len(players_data)} players")
+        
         if players_data:
-            print(f"🔍 Sample players: {[p['name'] for p in players_data[:3]]}")
+            log_debug(f"STARTUP: Sample players: {[p['name'] for p in players_data[:3]]}")
             
             # Test search for specific players
             acuna_players = [p for p in players_data if "acuna" in p['name'].lower()]
-            print(f"🔍 Found {len(acuna_players)} Acuña players:")
-            for ap in acuna_players:
-                print(f"   - {ap['name']} ({ap['team']}) - {ap.get('rarity', 'N/A')}")
+            log_info(f"STARTUP: Found {len(acuna_players)} Acuña players", 
+                    "\n".join([f"  - {ap['name']} ({ap['team']}) - {ap.get('rarity', 'N/A')}" for ap in acuna_players]))
             
-            cruz_players = [p for p in players_data if "cruz" in p['name'].lower()]
-            print(f"🔍 Found {len(cruz_players)} Cruz players:")
-            for cp in cruz_players[:10]:  # Limit to first 10 to avoid spam
-                print(f"   - {cp['name']} ({cp['team']}) - {cp.get('rarity', 'N/A')}")
-            if len(cruz_players) > 10:
-                print(f"   ... and {len(cruz_players) - 10} more Cruz players")
-                
-            # Test search for Joe Ryan specifically
-            joe_ryan_found = False
-            for player in players_data:
-                if "joe ryan" in player['name'].lower():
-                    print(f"🎯 FOUND JOE RYAN: {player['name']} - {player['team']}")
-                    joe_ryan_found = True
-                    break
-            
-            if not joe_ryan_found:
-                print("❌ JOE RYAN NOT FOUND in players database!")
-                # Show some Ryan players for debugging
-                ryan_players = [p for p in players_data if "ryan" in p['name'].lower()]
-                if ryan_players:
-                    print(f"🔍 Found {len(ryan_players)} players with 'Ryan' in name:")
-                    for rp in ryan_players[:5]:
-                        print(f"   - {rp['name']} ({rp['team']})")
+            if len(acuna_players) == 0:
+                log_error("STARTUP: NO ACUÑA PLAYERS FOUND - This might explain disambiguation issues!")
         else:
-            print("❌ NO PLAYERS DATA LOADED AT ALL!")
+            log_error("STARTUP: NO PLAYERS DATA LOADED AT ALL!")
             
         # Load nicknames
-        load_nicknames_from_json("nicknames.json")
+        load_success = load_nicknames_from_json("nicknames.json")
+        if load_success:
+            log_info("STARTUP: Nicknames loaded successfully")
+        else:
+            log_error("STARTUP: Failed to load nicknames")
         
         print(f"✅ Bot is ready and listening for messages")
         
@@ -1180,11 +1249,17 @@ async def ask_question(ctx, *, question: str = None):
         
         # Check if we have multiple players (need disambiguation)
         if len(matched_players) > 1:
-            print(f"🤔 Multiple players found ({len(matched_players)}) - showing disambiguation selection")
+            log_info(f"DISAMBIGUATION: Multiple players found ({len(matched_players)}) for '{question}'")
+            
             # Check if user already has a pending selection to avoid duplicates
+            log_debug(f"DUPLICATE CHECK: User ID {ctx.author.id}, current pending selections: {list(pending_selections.keys())}")
             if ctx.author.id in pending_selections:
-                print(f"⚠️ User {ctx.author.id} already has a pending selection, skipping duplicate")
+                existing = pending_selections[ctx.author.id]
+                log_warning(f"DUPLICATE DETECTED: User {ctx.author.id} already has pending selection", 
+                          f"Question: {existing.get('question', 'unknown')}\nExpires: {existing.get('expires_at', 'unknown')}")
                 return
+            else:
+                log_debug(f"DUPLICATE CHECK PASSED: User {ctx.author.id} has no pending selection")
             
             selection_text = "Multiple players found. Which did you mean:\n"
             reactions = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣"]
@@ -1235,10 +1310,14 @@ async def ask_question(ctx, *, question: str = None):
                 await error_msg.delete(delay=5)
                 return
             
-            # Only store pending selection if we successfully added reactions
+            # Store the pending selection with more details
             pending_selections[ctx.author.id] = {
+                'players': matched_players,
+                'question': question,
+                'message_id': selection_msg.id,
+                'expires_at': datetime.now() + timedelta(minutes=2),
+                'created_at': datetime.now(),
                 "message": selection_msg,
-                "players": matched_players,
                 "original_question": question,
                 "locked": False,
                 "original_user_message": ctx.message,
