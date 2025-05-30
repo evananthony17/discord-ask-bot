@@ -61,11 +61,112 @@ def normalize_name(name):
     # Convert to lowercase
     ascii_name = ascii_name.lower()
     
+    # Handle apostrophes consistently - remove them (O'Neil → oneil)
+    ascii_name = ascii_name.replace("'", "").replace("'", "")  # Handle both straight and curly apostrophes
+    
     # Remove common punctuation and extra spaces
     ascii_name = ascii_name.replace('.', '').replace(',', '').replace('-', ' ')
     ascii_name = ' '.join(ascii_name.split())  # Remove extra whitespace
     
     return ascii_name
+
+def load_nicknames_from_json(filename):
+    """Load player nicknames from a JSON file"""
+    global player_nicknames
+    
+    try:
+        if os.path.exists(filename):
+            with open(filename, 'r', encoding='utf-8') as f:
+                loaded_nicknames = json.load(f)
+                # Convert all keys to lowercase for case-insensitive matching
+                player_nicknames = {k.lower(): v.lower() for k, v in loaded_nicknames.items()}
+                print(f"✅ Nicknames loaded from {filename}: {len(player_nicknames)} nicknames")
+                
+                # Show a few examples for verification
+                if player_nicknames:
+                    examples = list(player_nicknames.items())[:5]
+                    print(f"🏷️ Example nicknames: {examples}")
+                return True
+        else:
+            print(f"❌ Nicknames file not found: {filename}")
+            print("🏷️ Creating example nicknames.json file...")
+            
+            # Create example file with common nicknames
+            example_nicknames = {
+                "jram": "jose ramirez",
+                "judge": "aaron judge",
+                "trout": "mike trout",
+                "vlad jr": "vladimir guerrero jr",
+                "vladdy": "vladimir guerrero jr",
+                "tatis": "fernando tatis jr",
+                "tatis jr": "fernando tatis jr",
+                "big papi": "david ortiz",
+                "papi": "david ortiz",
+                "miggy": "miguel cabrera",
+                "ohtani": "shohei ohtani",
+                "sho time": "shohei ohtani",
+                "showtime": "shohei ohtani",
+                "mookie": "mookie betts",
+                "freddie": "freddie freeman",
+                "bryce": "bryce harper",
+                "harper": "bryce harper",
+                "machado": "manny machado",
+                "altuve": "jose altuve",
+                "lindor": "francisco lindor",
+                "degrom": "jacob degrom",
+                "scherzer": "max scherzer",
+                "mad max": "max scherzer",
+                "verlander": "justin verlander",
+                "jv": "justin verlander",
+                "kershaw": "clayton kershaw",
+                "cole": "gerrit cole"
+            }
+            
+            with open(filename, 'w', encoding='utf-8') as f:
+                json.dump(example_nicknames, f, indent=2, ensure_ascii=False)
+            
+            # Load the newly created file
+            player_nicknames = {k.lower(): v.lower() for k, v in example_nicknames.items()}
+            print(f"✅ Created and loaded example {filename} with {len(player_nicknames)} nicknames")
+            return True
+            
+    except Exception as e:
+        print(f"❌ Error loading nicknames from {filename}: {e}")
+        print("🏷️ Continuing without nicknames...")
+        player_nicknames = {}
+        return False
+
+def expand_nicknames(text):
+    """Convert common baseball nicknames to full player names"""
+    if not player_nicknames:
+        return text  # No nicknames loaded
+        
+    text_lower = text.lower().strip()
+    
+    # Check for exact nickname matches
+    if text_lower in player_nicknames:
+        expanded_name = player_nicknames[text_lower]
+        print(f"🏷️ NICKNAME EXPANSION: '{text}' → '{expanded_name}'")
+        return expanded_name
+    
+    # Check for nicknames within the text
+    words = text_lower.split()
+    expanded_words = []
+    nickname_found = False
+    
+    for word in words:
+        if word in player_nicknames:
+            expanded_name = player_nicknames[word]
+            expanded_words.append(expanded_name)
+            nickname_found = True
+            print(f"🏷️ NICKNAME EXPANSION: '{word}' in '{text}' → '{expanded_name}'")
+        else:
+            expanded_words.append(word)
+    
+    if nickname_found:
+        return ' '.join(expanded_words)
+    
+    return text  # No nicknames found, return original
 
 def is_likely_player_request(text):
     """Determine if text is likely asking about a player vs casual conversation"""
@@ -78,30 +179,30 @@ def is_likely_player_request(text):
         print(f"🚫 EARLY FILTER: Single short word '{words[0]}' - probably not a player request")
         return False
     
-    # Look for obvious non-player patterns
+    # Look for obvious non-player patterns using WORD BOUNDARIES
     casual_patterns = [
-        'more like',       # "update? More like downdate!"
-        'lol',
-        'haha', 
-        'thanks',
-        'thank you',
-        'good job',
-        'nice job', 
-        'well done',
-        'cool',
-        'wow',
-        'yeah',
-        'yes',
-        'no',
-        'ok',
-        'okay',
-        'what the',
-        'wtf',
-        'omg'
+        r'\bmore like\b',     # "update? More like downdate!"
+        r'\blol\b',
+        r'\bhaha\b', 
+        r'\bthanks\b',
+        r'\bthank you\b',
+        r'\bgood job\b',
+        r'\bnice job\b', 
+        r'\bwell done\b',
+        r'\bcool\b',
+        r'\bwow\b',
+        r'\byeah\b',
+        r'\byes\b',
+        r'\bno\b',
+        r'\bok\b',           # This will match "ok" but NOT "looking"
+        r'\bokay\b',
+        r'\bwhat the\b',
+        r'\bwtf\b',
+        r'\bomg\b'
     ]
     
     for pattern in casual_patterns:
-        if pattern in normalized:
+        if re.search(pattern, normalized):
             print(f"🚫 EARLY FILTER: Found casual pattern '{pattern}' in '{text}'")
             return False
     
@@ -329,11 +430,12 @@ def check_last_name_match(potential_name, player_name):
     
     return None, False
 
-def fuzzy_match_players(text, max_results=7):
+def fuzzy_match_players(text, max_results=8):  # Increased from 7 to 8
     """Fuzzy match player names in text and return top matches - IMPROVED VERSION"""
     from difflib import SequenceMatcher
     
     print(f"🔍 FUZZY MATCH DEBUG: Starting fuzzy match for text: '{text}'")
+    print(f"🔍 FUZZY MATCH DEBUG: Will check against {len(players_data)} total players")
     
     if not players_data:
         print("🔍 FUZZY MATCH DEBUG: No players data available")
@@ -341,6 +443,7 @@ def fuzzy_match_players(text, max_results=7):
     
     # Extract potential player names from the text
     potential_names = extract_potential_names(text)
+    print(f"🔍 FUZZY MATCH DEBUG: Extracted potential names: {potential_names}")
     
     matches = []
     
@@ -350,8 +453,17 @@ def fuzzy_match_players(text, max_results=7):
         if len(potential_name) >= 6:
             print(f"🔍 FUZZY MATCH DEBUG: Trying potential name: '{potential_name}'")
         
+        # DEBUG: Count how many Acuña players we check
+        acuna_players_checked = 0
+        acuna_players_matched = 0
+        
         for player in players_data:
             player_name = normalize_name(player['name'])  # ← NORMALIZE DATABASE NAMES TOO
+            
+            # DEBUG: Count Acuña players
+            if "acuna" in player_name:
+                acuna_players_checked += 1
+                print(f"🔍 ACUNA DEBUG #{acuna_players_checked}: Checking potential '{potential_name}' vs Acuña player '{player['name']}' (normalized: '{player_name}')")
             
             # First check for special last name match
             lastname_sim, is_lastname_match = check_last_name_match(potential_name, player_name)
@@ -360,6 +472,11 @@ def fuzzy_match_players(text, max_results=7):
                 # Special last name match - use more lenient threshold
                 matches.append((player, lastname_sim))
                 print(f"🎯 LAST NAME SPECIAL MATCH: '{potential_name}' matched {player['name']} (last name score: {lastname_sim:.3f})")
+                
+                # DEBUG: Count Acuña matches
+                if "acuna" in player_name:
+                    acuna_players_matched += 1
+                    print(f"🔍 ACUNA DEBUG: ✅ LAST NAME MATCH #{acuna_players_matched} - Added {player['name']} with score {lastname_sim:.3f}")
                 continue
             
             # Regular fuzzy matching
@@ -406,6 +523,10 @@ def fuzzy_match_players(text, max_results=7):
             else:
                 threshold = 0.7
             
+            # DEBUG: Special logging for Acuña players
+            if "acuna" in player_name:
+                print(f"🔍 ACUNA DEBUG: Similarity={similarity:.3f}, last_name_sim={last_name_similarity:.3f}, best={best_similarity:.3f}, threshold={threshold:.2f}")
+            
             if best_similarity >= threshold:
                 matches.append((player, best_similarity))
                 if exact_last_name_match:
@@ -414,10 +535,29 @@ def fuzzy_match_players(text, max_results=7):
                     print(f"🔍 FUZZY MATCH DEBUG: GOOD LAST NAME MATCH - '{potential_name}' vs '{player_last_name}' (from {player_name}) = {last_name_similarity:.3f}")
                 else:
                     print(f"🔍 FUZZY MATCH DEBUG: GOOD MATCH - '{potential_name}' vs '{player_name}' = {similarity:.3f} (threshold: {threshold:.2f})")
+                
+                # DEBUG: Count Acuña matches
+                if "acuna" in player_name:
+                    acuna_players_matched += 1
+                    print(f"🔍 ACUNA DEBUG: ✅ REGULAR MATCH #{acuna_players_matched} - Added {player['name']} with score {best_similarity:.3f}")
             else:
                 # Only log decent attempts to reduce spam
                 if best_similarity >= 0.75:  # Increased threshold from 0.5 to reduce logging
                     print(f"🔍 FUZZY MATCH DEBUG: rejected - '{potential_name}' vs '{player_name}' = {best_similarity:.3f} (threshold: {threshold:.2f})")
+                
+                # DEBUG: Special logging for rejected Acuña players
+                if "acuna" in player_name and best_similarity >= 0.5:
+                    print(f"🔍 ACUNA DEBUG: ❌ REJECTED - {player['name']} with score {best_similarity:.3f} (threshold: {threshold:.2f})")
+        
+        # DEBUG: Summary for this potential name
+        if acuna_players_checked > 0:
+            print(f"🔍 ACUNA SUMMARY for '{potential_name}': Checked {acuna_players_checked} Acuña players, matched {acuna_players_matched}")
+            if acuna_players_matched == 0:
+                print(f"🚨 ACUNA PROBLEM: No Acuña players matched for '{potential_name}' - this might be the bug!")
+            elif acuna_players_matched == 1:
+                print(f"⚠️ ACUNA ISSUE: Only 1 Acuña player matched for '{potential_name}' - expected multiple!")
+            else:
+                print(f"✅ ACUNA SUCCESS: {acuna_players_matched} Acuña players matched for '{potential_name}'!")
     
     # If no matches found but the text looks like a player name, do a fallback recent mentions check
     if not matches and is_likely_player_request(text):
@@ -432,11 +572,15 @@ def fuzzy_match_players(text, max_results=7):
             print(f"🔍 FUZZY MATCH DEBUG: No strict matches found, but detected potential player words: {potential_player_words}")
             print(f"🔍 FUZZY MATCH DEBUG: Will trigger fallback recent mentions check")
     
+    print(f"🔍 FUZZY MATCH DEBUG: Found {len(matches)} total matches before deduplication")
+    
+    # DEBUG: Show all matches before deduplication
+    for i, (player, score) in enumerate(matches):
+        print(f"🔍 FUZZY MATCH DEBUG: Match {i+1}: {player['name']} ({player['team']}) - score: {score:.3f}")
+    
     if not matches:
         print("🔍 FUZZY MATCH DEBUG: No matches found above threshold")
         return []
-    
-    print(f"🔍 FUZZY MATCH DEBUG: Found {len(matches)} total matches before deduplication")
     
     # Sort by score and remove duplicates by player NAME+TEAM (not just name)
     matches.sort(key=lambda x: x[1], reverse=True)
@@ -504,10 +648,17 @@ def contains_url(text):
 def check_player_mentioned(text):
     """Check if any player from the list is mentioned in the text using IMPROVED fuzzy matching"""
     print(f"🔍 CHECK PLAYER DEBUG: Looking for players in: '{text}'")
+    print(f"🔍 CHECK PLAYER DEBUG: Normalized input: '{normalize_name(text)}'")
     
     if not players_data:
         print("🔍 CHECK PLAYER DEBUG: No players data available")
         return None
+    
+    # First, expand any nicknames
+    expanded_text = expand_nicknames(text)
+    if expanded_text != text:
+        print(f"🏷️ NICKNAME: Using expanded text: '{expanded_text}' instead of '{text}'")
+        text = expanded_text  # Use the expanded version for the rest of the search
     
     # Apply early filter first
     if not is_likely_player_request(text):
@@ -519,9 +670,14 @@ def check_player_mentioned(text):
     direct_matches = []
     for player in players_data:
         player_name_normalized = normalize_name(player['name'])
-        if player_name_normalized in text_normalized:
+        
+        # Check for exact match or if the player name is contained in the text
+        # Also check if the text is contained in the player name (for partial searches)
+        if (player_name_normalized in text_normalized or 
+            text_normalized in player_name_normalized or
+            player_name_normalized == text_normalized):
             direct_matches.append(player)
-            print(f"🔍 CHECK PLAYER DEBUG: DIRECT MATCH found: {player['name']} ({player['team']}) - normalized: '{player_name_normalized}' in '{text_normalized}'")
+            print(f"🔍 CHECK PLAYER DEBUG: DIRECT MATCH found: {player['name']} ({player['team']}) - normalized: '{player_name_normalized}' matches '{text_normalized}'")
     
     print(f"🔍 CHECK PLAYER DEBUG: Found {len(direct_matches)} total direct matches")
     
@@ -564,16 +720,26 @@ async def check_recent_player_mentions(guild, players_to_check):
     """Check if any of the players were mentioned in the last X hours in bot messages only"""
     import datetime
     
+    print(f"🕒 RECENT MENTION CHECK: Checking {len(players_to_check)} players")
+    for p in players_to_check:
+        print(f"🕒 RECENT MENTION CHECK: Looking for '{p['name']}' ({p['team']})")
+    
     time_threshold = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=RECENT_MENTION_HOURS)
+    print(f"🕒 RECENT MENTION CHECK: Time threshold: {time_threshold}")
     recent_mentions = []
     
     # Get both channels
     final_channel = discord.utils.get(guild.text_channels, name=FINAL_ANSWER_CHANNEL)
     answering_channel = discord.utils.get(guild.text_channels, name=ANSWERING_CHANNEL)
     
+    print(f"🕒 RECENT MENTION CHECK: Final channel: {final_channel}")
+    print(f"🕒 RECENT MENTION CHECK: Answering channel: {answering_channel}")
+    
     for player in players_to_check:
         player_name_normalized = normalize_name(player['name'])
         player_uuid = player['uuid'].lower()
+        
+        print(f"🕒 RECENT MENTION CHECK: Checking player '{player['name']}' (normalized: '{player_name_normalized}', uuid: {player_uuid[:8]}...)")
         
         # Track where the player was found
         found_in_answering = False
@@ -582,44 +748,54 @@ async def check_recent_player_mentions(guild, players_to_check):
         # Check question reposting channel (answering channel) for BOT messages only
         if answering_channel:
             try:
+                message_count = 0
                 async for message in answering_channel.history(after=time_threshold, limit=RECENT_MENTION_LIMIT):
+                    message_count += 1
                     # Only check messages from the bot itself
                     if message.author == guild.me:  # guild.me is the bot
                         message_normalized = normalize_name(message.content)
                         if (re.search(rf"\b{re.escape(player_name_normalized)}\b", message_normalized) or 
                             player_uuid in message_normalized):
-                            print(f"🕒 Found {player['name']} in bot message in answering channel")
+                            print(f"🕒 RECENT MENTION CHECK: Found {player['name']} in bot message in answering channel")
+                            print(f"🕒 RECENT MENTION CHECK: Message content snippet: '{message.content[:100]}...'")
                             found_in_answering = True
                             break
+                print(f"🕒 RECENT MENTION CHECK: Checked {message_count} messages in answering channel")
             except Exception as e:
-                print(f"❌ Error checking answering channel: {e}")
+                print(f"❌ RECENT MENTION CHECK: Error checking answering channel: {e}")
         
         # Check final answer channel for BOT messages only
         if final_channel:
             try:
+                message_count = 0
                 async for message in final_channel.history(after=time_threshold, limit=RECENT_MENTION_LIMIT):
+                    message_count += 1
                     # Only check messages from the bot itself
                     if message.author == guild.me:  # guild.me is the bot
                         message_normalized = normalize_name(message.content)
                         if (re.search(rf"\b{re.escape(player_name_normalized)}\b", message_normalized) or 
                             player_uuid in message_normalized):
-                            print(f"🕒 Found {player['name']} in bot message in final channel")
+                            print(f"🕒 RECENT MENTION CHECK: Found {player['name']} in bot message in final channel")
+                            print(f"🕒 RECENT MENTION CHECK: Message content snippet: '{message.content[:100]}...'")
                             found_in_final = True
                             break
+                print(f"🕒 RECENT MENTION CHECK: Checked {message_count} messages in final channel")
             except Exception as e:
-                print(f"❌ Error checking final channel: {e}")
+                print(f"❌ RECENT MENTION CHECK: Error checking final channel: {e}")
         
         # Determine status based on where the player was found
         status = None
         if found_in_answering and found_in_final:
             status = "answered"  # Asked and answered
-            print(f"🕒 {player['name']} found in both channels - status: answered")
+            print(f"🕒 RECENT MENTION CHECK: {player['name']} found in both channels - status: answered")
         elif found_in_answering and not found_in_final:
             status = "pending"   # Asked but not answered
-            print(f"🕒 {player['name']} found only in answering channel - status: pending")
+            print(f"🕒 RECENT MENTION CHECK: {player['name']} found only in answering channel - status: pending")
         elif not found_in_answering and found_in_final:
             status = "answered"  # Edge case: only in final (shouldn't happen normally)
-            print(f"🕒 {player['name']} found only in final channel - status: answered (edge case)")
+            print(f"🕒 RECENT MENTION CHECK: {player['name']} found only in final channel - status: answered (edge case)")
+        else:
+            print(f"🕒 RECENT MENTION CHECK: {player['name']} NOT FOUND in either channel")
         # If not found in either channel, status remains None (no recent mention)
         
         # Add to results if found (avoid duplicates by name+team)
@@ -630,7 +806,7 @@ async def check_recent_player_mentions(guild, players_to_check):
                 if (normalize_name(existing["player"]["name"]) == normalize_name(player["name"]) and 
                     normalize_name(existing["player"]["team"]) == normalize_name(player["team"])):
                     already_added = True
-                    print(f"🕒 Skipping duplicate recent mention for {player['name']} ({player['team']})")
+                    print(f"🕒 RECENT MENTION CHECK: Skipping duplicate recent mention for {player['name']} ({player['team']})")
                     break
             
             if not already_added:
@@ -638,8 +814,9 @@ async def check_recent_player_mentions(guild, players_to_check):
                     "player": player,
                     "status": status
                 })
-                print(f"🕒 Added recent mention: {player['name']} ({player['team']}) - {status}")
+                print(f"🕒 RECENT MENTION CHECK: Added recent mention: {player['name']} ({player['team']}) - {status}")
     
+    print(f"🕒 RECENT MENTION CHECK: Final result: {len(recent_mentions)} recent mentions found")
     return recent_mentions
 
 async def process_approved_question(channel, user, question, original_message=None):
@@ -724,6 +901,19 @@ async def on_ready():
         if players_data:
             print(f"🔍 Sample players: {[p['name'] for p in players_data[:3]]}")
             
+            # Test search for specific players
+            acuna_players = [p for p in players_data if "acuna" in p['name'].lower()]
+            print(f"🔍 Found {len(acuna_players)} Acuña players:")
+            for ap in acuna_players:
+                print(f"   - {ap['name']} ({ap['team']}) - {ap.get('rarity', 'N/A')}")
+            
+            cruz_players = [p for p in players_data if "cruz" in p['name'].lower()]
+            print(f"🔍 Found {len(cruz_players)} Cruz players:")
+            for cp in cruz_players[:10]:  # Limit to first 10 to avoid spam
+                print(f"   - {cp['name']} ({cp['team']}) - {cp.get('rarity', 'N/A')}")
+            if len(cruz_players) > 10:
+                print(f"   ... and {len(cruz_players) - 10} more Cruz players")
+                
             # Test search for Joe Ryan specifically
             joe_ryan_found = False
             for player in players_data:
@@ -742,6 +932,9 @@ async def on_ready():
                         print(f"   - {rp['name']} ({rp['team']})")
         else:
             print("❌ NO PLAYERS DATA LOADED AT ALL!")
+            
+        # Load nicknames
+        load_nicknames_from_json("nicknames.json")
         
         print(f"✅ Bot is ready and listening for messages")
         
@@ -994,7 +1187,7 @@ async def ask_question(ctx, *, question: str = None):
                 return
             
             selection_text = "Multiple players found. Which did you mean:\n"
-            reactions = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣"]
+            reactions = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣"]
             
             for i, player in enumerate(matched_players):
                 if i < len(reactions):
@@ -1061,7 +1254,7 @@ async def ask_question(ctx, *, question: str = None):
             print("🚨 COMMAND HANDLER FINISHED - SHOWING DISAMBIGUATION")
             return
         
-        # Check recent mentions for all matched players (only if we have a single player or proceeded past disambiguation)
+        # Single player found - check recent mentions
         recent_mentions = await check_recent_player_mentions(ctx.guild, matched_players)
         
         if recent_mentions:
@@ -1102,7 +1295,7 @@ async def ask_question(ctx, *, question: str = None):
                     return
                 
                 selection_text = "Multiple players have been asked about recently. Which did you mean:\n"
-                reactions = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣"]
+                reactions = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣"]
                 
                 for i, mention in enumerate(recent_mentions):
                     player = mention["player"]
@@ -1268,7 +1461,7 @@ async def on_reaction_add(reaction, user):
     selection_data["locked"] = True
     
     # Valid reactions
-    reactions = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣"]
+    reactions = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣"]
     
     if str(reaction.emoji) in reactions:
         selected_index = reactions.index(str(reaction.emoji))
