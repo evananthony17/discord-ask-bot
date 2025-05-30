@@ -329,7 +329,7 @@ def check_last_name_match(potential_name, player_name):
     
     return None, False
 
-def fuzzy_match_players(text, max_results=5):
+def fuzzy_match_players(text, max_results=7):
     """Fuzzy match player names in text and return top matches - IMPROVED VERSION"""
     from difflib import SequenceMatcher
     
