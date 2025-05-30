@@ -988,13 +988,37 @@ async def on_ready():
         if players_data:
             log_debug(f"STARTUP: Sample players: {[p['name'] for p in players_data[:3]]}")
             
-            # Test search for specific players
-            acuna_players = [p for p in players_data if "acuna" in p['name'].lower()]
-            log_info(f"STARTUP: Found {len(acuna_players)} Acuña players", 
-                    "\n".join([f"  - {ap['name']} ({ap['team']}) - {ap.get('rarity', 'N/A')}" for ap in acuna_players]))
+            # Test normalize_name function first
+            test_name = "Ronald Acuña Jr."
+            normalized_test = normalize_name(test_name)
+            log_debug(f"STARTUP: Normalize test: '{test_name}' → '{normalized_test}'")
             
-            if len(acuna_players) == 0:
+            # Test search for Acuña players - FIXED to use normalize_name
+            acuna_players = []
+            for p in players_data:
+                normalized_name = normalize_name(p['name'])
+                if "acuna" in normalized_name:
+                    acuna_players.append(p)
+            
+            log_info(f"STARTUP: Found {len(acuna_players)} Acuña players")
+            if acuna_players:
+                details = "\n".join([f"  - {ap['name']} ({ap['team']}) - {ap.get('rarity', 'N/A')}" for ap in acuna_players])
+                log_info(f"STARTUP: Acuña players found:", details)
+            else:
                 log_error("STARTUP: NO ACUÑA PLAYERS FOUND - This might explain disambiguation issues!")
+                
+                # Additional debugging if no Acuña found
+                log_error(f"STARTUP: Debug - looking for names containing 'ronald'...")
+                ronald_players = [p for p in players_data if "ronald" in normalize_name(p['name'])]
+                if ronald_players:
+                    log_error(f"STARTUP: Found {len(ronald_players)} Ronald players:")
+                    for rp in ronald_players[:3]:
+                        original_name = rp['name']
+                        normalized = normalize_name(original_name)
+                        log_error(f"  - Original: '{original_name}' → Normalized: '{normalized}'")
+                else:
+                    log_error("STARTUP: No Ronald players found either!")
+                    
         else:
             log_error("STARTUP: NO PLAYERS DATA LOADED AT ALL!")
             
@@ -1009,6 +1033,7 @@ async def on_ready():
         
     except Exception as e:
         print(f"❌ ERROR IN ON_READY: {e}")
+        log_error(f"STARTUP ERROR: {e}")
         raise e
 
 @bot.event  
