@@ -25,6 +25,29 @@ intents.message_content = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
+# -------- HELPER FUNCTIONS --------
+def is_ambiguous_single_player_question(question, matched_players):
+    """Determine if this is an ambiguous single-player question requiring disambiguation"""
+    
+    # If only 2 players found, it's likely ambiguous (like "acuna" finding both Acuñas)
+    if len(matched_players) == 2:
+        return True
+    
+    # Look for multi-player indicators in the question
+    multi_player_indicators = ['and', '&', ',', 'both', 'all', 'compare', 'vs', 'versus']
+    question_lower = question.lower()
+    
+    # If question contains multi-player words, it's intentional
+    if any(indicator in question_lower for indicator in multi_player_indicators):
+        return False
+    
+    # If 3+ players but no multi-player indicators, probably ambiguous
+    if len(matched_players) >= 3:
+        return True
+    
+    # Default to ambiguous for safety
+    return True
+
 # -------- EVENTS --------
 @bot.event
 async def on_ready():
@@ -144,10 +167,18 @@ async def ask_question(ctx, *, question: str = None):
             fallback_recent_check = True
 
     if matched_players:
-        # Handle multiple players (process all of them)
+        # Handle multiple players
         if len(matched_players) > 1:
-            await handle_multi_player_question(ctx, question, matched_players)
-            return
+            # Check if this is an ambiguous single-player question vs intentional multi-player
+            if is_ambiguous_single_player_question(question, matched_players):
+                # Show disambiguation prompt
+                from selection_handlers import create_player_disambiguation_prompt
+                await create_player_disambiguation_prompt(ctx, question, matched_players)
+                return
+            else:
+                # True multi-player question - process all players
+                await handle_multi_player_question(ctx, question, matched_players)
+                return
         
         # Handle single player
         else:

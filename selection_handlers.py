@@ -203,3 +203,62 @@ def cleanup_invalid_selection(user_id, selection_data):
         del pending_selections[user_id]
     
     cancel_selection_timeout(user_id)
+
+# Add this function to selection_handlers.py
+
+async def create_player_disambiguation_prompt(ctx, question, matched_players):
+    """Create a disambiguation prompt when multiple players match an ambiguous search"""
+    from config import REACTIONS, pending_selections
+    
+    print(f"DISAMBIGUATION: Creating prompt for {len(matched_players)} players")
+    
+    # Log the disambiguation event
+    await log_analytics("Question Processed",
+        user_id=ctx.author.id,
+        user_name=ctx.author.display_name,
+        channel=ctx.channel.name,
+        question=question,
+        status="disambiguation_required",
+        reason=f"found_{len(matched_players)}_players"
+    )
+    
+    # Create the prompt message
+    prompt_lines = ["**Which player did you mean?**\n"]
+    
+    for i, player in enumerate(matched_players[:len(REACTIONS)]):
+        emoji = REACTIONS[i]
+        prompt_lines.append(f"{emoji} {player['name']} ({player['team']})")
+    
+    prompt_text = "\n".join(prompt_lines)
+    prompt_text += "\n\n*Click a reaction to select the player.*"
+    
+    try:
+        # Send the disambiguation prompt
+        prompt_message = await ctx.send(prompt_text)
+        print(f"DISAMBIGUATION: Sent prompt message with ID {prompt_message.id}")
+        
+        # Add reaction emojis
+        for i in range(len(matched_players[:len(REACTIONS)])):
+            await prompt_message.add_reaction(REACTIONS[i])
+            print(f"DISAMBIGUATION: Added reaction {REACTIONS[i]}")
+        
+        # Store in pending selections
+        pending_selections[ctx.author.id] = {
+            "message": prompt_message,
+            "players": matched_players,
+            "original_question": question,
+            "original_user_message": ctx.message,
+            "type": "disambiguation_selection",
+            "locked": False
+        }
+        
+        # Start timeout task
+        start_selection_timeout(ctx.author.id, ctx)
+        
+        print(f"DISAMBIGUATION: Set up selection for user {ctx.author.id}")
+        
+        return True  # Successfully created prompt
+        
+    except Exception as e:
+        log_error(f"DISAMBIGUATION: Failed to create prompt: {e}")
+        return False    
