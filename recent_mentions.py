@@ -3,33 +3,32 @@ import discord
 from datetime import datetime, timedelta, timezone
 from config import FINAL_ANSWER_CHANNEL, ANSWERING_CHANNEL, RECENT_MENTION_HOURS, RECENT_MENTION_LIMIT
 from utils import normalize_name
-from logging_system import log_error
+from logging_system import log_error, log_info
 
 # -------- RECENT MENTIONS CHECKING --------
 
 async def check_recent_player_mentions(guild, players_to_check):
     """Check if any of the players were mentioned in the last X hours in bot messages only"""
-    from logging_system import log_info
     log_info(f"RECENT MENTION CHECK: Checking {len(players_to_check)} players")
     for p in players_to_check:
         log_info(f"RECENT MENTION CHECK: Looking for '{p['name']}' ({p['team']})")
     
     time_threshold = datetime.now(timezone.utc) - timedelta(hours=RECENT_MENTION_HOURS)
-    print(f"RECENT MENTION CHECK: Time threshold: {time_threshold}")
+    log_info(f"RECENT MENTION CHECK: Time threshold: {time_threshold}")
     recent_mentions = []
     
     # Get both channels
     final_channel = discord.utils.get(guild.text_channels, name=FINAL_ANSWER_CHANNEL)
     answering_channel = discord.utils.get(guild.text_channels, name=ANSWERING_CHANNEL)
     
-    print(f"RECENT MENTION CHECK: Final channel: {final_channel}")
-    print(f"RECENT MENTION CHECK: Answering channel: {answering_channel}")
+    log_info(f"RECENT MENTION CHECK: Final channel: {final_channel}")
+    log_info(f"RECENT MENTION CHECK: Answering channel: {answering_channel}")
     
     for player in players_to_check:
         player_name_normalized = normalize_name(player['name'])
         player_uuid = player['uuid'].lower()
         
-        print(f"RECENT MENTION CHECK: Checking player '{player['name']}' (normalized: '{player_name_normalized}', uuid: {player_uuid[:8]}...)")
+        log_info(f"RECENT MENTION CHECK: Checking player '{player['name']}' (normalized: '{player_name_normalized}', uuid: {player_uuid[:8]}...)")
         
         # Track where the player was found
         found_in_answering = False
@@ -47,10 +46,10 @@ async def check_recent_player_mentions(guild, players_to_check):
                         if (re.search(rf"\b{re.escape(player_name_normalized)}\b", message_normalized) or 
                             player_uuid in message_normalized):
                             log_info(f"RECENT MENTION CHECK: Found {player['name']} in bot message in answering channel")
-                            print(f"RECENT MENTION CHECK: Message content snippet: '{message.content[:100]}...'")
+                            log_info(f"RECENT MENTION CHECK: Message content snippet: '{message.content[:100]}...'")
                             found_in_answering = True
                             break
-                print(f"RECENT MENTION CHECK: Checked {message_count} messages in answering channel")
+                log_info(f"RECENT MENTION CHECK: Checked {message_count} messages in answering channel")
             except Exception as e:
                 log_error(f"RECENT MENTION CHECK: Error checking answering channel: {e}")
         
@@ -65,11 +64,11 @@ async def check_recent_player_mentions(guild, players_to_check):
                         message_normalized = normalize_name(message.content)
                         if (re.search(rf"\b{re.escape(player_name_normalized)}\b", message_normalized) or 
                             player_uuid in message_normalized):
-                            print(f"RECENT MENTION CHECK: Found {player['name']} in bot message in final channel")
-                            print(f"RECENT MENTION CHECK: Message content snippet: '{message.content[:100]}...'")
+                            log_info(f"RECENT MENTION CHECK: Found {player['name']} in bot message in final channel")
+                            log_info(f"RECENT MENTION CHECK: Message content snippet: '{message.content[:100]}...'")
                             found_in_final = True
                             break
-                print(f"RECENT MENTION CHECK: Checked {message_count} messages in final channel")
+                log_info(f"RECENT MENTION CHECK: Checked {message_count} messages in final channel")
             except Exception as e:
                 log_error(f"RECENT MENTION CHECK: Error checking final channel: {e}")
         
@@ -77,13 +76,13 @@ async def check_recent_player_mentions(guild, players_to_check):
         status = None
         if found_in_answering and found_in_final:
             status = "answered"  # Asked and answered
-            print(f"RECENT MENTION CHECK: {player['name']} found in both channels - status: answered")
+            log_info(f"RECENT MENTION CHECK: {player['name']} found in both channels - status: answered")
         elif found_in_answering and not found_in_final:
             status = "pending"   # Asked but not answered
-            print(f"RECENT MENTION CHECK: {player['name']} found only in answering channel - status: pending")
+            log_info(f"RECENT MENTION CHECK: {player['name']} found only in answering channel - status: pending")
         elif not found_in_answering and found_in_final:
             status = "answered"  # Edge case: only in final (shouldn't happen normally)
-            print(f"RECENT MENTION CHECK: {player['name']} found only in final channel - status: answered (edge case)")
+            log_info(f"RECENT MENTION CHECK: {player['name']} found only in final channel - status: answered (edge case)")
         else:
             log_info(f"RECENT MENTION CHECK: {player['name']} NOT FOUND in either channel")
         # If not found in either channel, status remains None (no recent mention)
@@ -96,7 +95,7 @@ async def check_recent_player_mentions(guild, players_to_check):
                 if (normalize_name(existing["player"]["name"]) == normalize_name(player["name"]) and 
                     normalize_name(existing["player"]["team"]) == normalize_name(player["team"])):
                     already_added = True
-                    print(f"RECENT MENTION CHECK: Skipping duplicate recent mention for {player['name']} ({player['team']})")
+                    log_info(f"RECENT MENTION CHECK: Skipping duplicate recent mention for {player['name']} ({player['team']})")
                     break
             
             if not already_added:
@@ -104,9 +103,9 @@ async def check_recent_player_mentions(guild, players_to_check):
                     "player": player,
                     "status": status
                 })
-                print(f"RECENT MENTION CHECK: Added recent mention: {player['name']} ({player['team']}) - {status}")
+                log_info(f"RECENT MENTION CHECK: Added recent mention: {player['name']} ({player['team']}) - {status}")
     
-    print(f"RECENT MENTION CHECK: Final result: {len(recent_mentions)} recent mentions found")
+    log_info(f"RECENT MENTION CHECK: Final result: {len(recent_mentions)} recent mentions found")
     return recent_mentions
 
 # -------- FALLBACK RECENT MENTIONS CHECK --------
@@ -126,7 +125,7 @@ async def check_fallback_recent_mentions(guild, potential_player_words):
                     if message.author == guild.me:
                         message_normalized = normalize_name(message.content)
                         if word in message_normalized:
-                            print(f"FALLBACK: Found '{word}' in recent bot message in answering channel")
+                            log_info(f"FALLBACK: Found '{word}' in recent bot message in answering channel")
                             return True
             except Exception as e:
                 log_error(f"FALLBACK: Error checking answering channel: {e}")
@@ -138,7 +137,7 @@ async def check_fallback_recent_mentions(guild, potential_player_words):
                     if message.author == guild.me:
                         message_normalized = normalize_name(message.content)
                         if word in message_normalized:
-                            print(f"FALLBACK: Found '{word}' in recent bot message in final channel")
+                            log_info(f"FALLBACK: Found '{word}' in recent bot message in final channel")
                             return True
             except Exception as e:
                 log_error(f"FALLBACK: Error checking final channel: {e}")
