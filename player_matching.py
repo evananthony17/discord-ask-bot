@@ -13,7 +13,7 @@ def extract_potential_names(text):
     # First expand nicknames
     expanded_text = expand_nicknames(text)
     if expanded_text != text:
-        print(f"🔍 NAME EXTRACTION: Expanded '{text}' to '{expanded_text}'")
+        print(f"NAME EXTRACTION: Expanded '{text}' to '{expanded_text}'")
         text = expanded_text
     
     text_normalized = normalize_name(text)
@@ -24,14 +24,14 @@ def extract_potential_names(text):
     segments = re.split(r'\s+(?:and|&|vs\.?|versus|,)\s+', text_normalized, flags=re.IGNORECASE)
     
     if len(segments) > 1:
-        print(f"🔍 MULTI-PLAYER: Split '{text}' into {len(segments)} segments: {segments}")
+        print(f"MULTI-PLAYER: Split '{text}' into {len(segments)} segments: {segments}")
         
         # Process each segment individually
         for i, segment in enumerate(segments):
             segment = segment.strip()
             if len(segment) >= 3:  # Reasonable minimum length
                 potential_names.append(segment)
-                print(f"🔍 MULTI-PLAYER: Segment {i+1}: '{segment}'")
+                print(f"MULTI-PLAYER: Segment {i+1}: '{segment}'")
     
     # Remove common question words and phrases
     stop_words = {
@@ -102,7 +102,7 @@ def extract_potential_names(text):
             unique_names.append(name)
             seen.add(name)
     
-    print(f"🔍 NAME EXTRACTION: Found {len(unique_names)} potential names from '{text}': {unique_names}")
+    print(f"NAME EXTRACTION: Found {len(unique_names)} potential names from '{text}': {unique_names}")
     return unique_names
 
 # -------- LAST NAME MATCHING --------

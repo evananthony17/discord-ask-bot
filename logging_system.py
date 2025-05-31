@@ -66,7 +66,7 @@ async def log_analytics(event_type, **kwargs):
         return
     
     embed = {
-        "title": f"📊 ANALYTICS - {event_type}",
+        "title": f"ANALYTICS - {event_type}",
         "color": 0x9932cc,
         "timestamp": datetime.utcnow().isoformat(),
         "fields": []
@@ -75,14 +75,14 @@ async def log_analytics(event_type, **kwargs):
     # Add standard fields
     if "user_id" in kwargs:
         embed["fields"].append({
-            "name": "👤 User Info",
+            "name": "User Info",
             "value": f"ID: {kwargs['user_id']}\nName: {kwargs.get('user_name', 'Unknown')}",
             "inline": True
         })
     
     if "channel" in kwargs:
         embed["fields"].append({
-            "name": "📍 Channel",
+            "name": "Channel",
             "value": f"#{kwargs['channel']}",
             "inline": True
         })
@@ -90,7 +90,7 @@ async def log_analytics(event_type, **kwargs):
     if "question" in kwargs:
         question_text = kwargs['question'][:100] + "..." if len(kwargs['question']) > 100 else kwargs['question']
         embed["fields"].append({
-            "name": "❓ Question",
+            "name": "Question",
             "value": f"```{question_text}```",
             "inline": False
         })
@@ -99,7 +99,7 @@ async def log_analytics(event_type, **kwargs):
     if event_type == "Player Search":
         if "duration_ms" in kwargs:
             embed["fields"].append({
-                "name": "⚡ Performance",
+                "name": "Performance",
                 "value": f"Duration: {kwargs['duration_ms']}ms\nPlayers Checked: {kwargs.get('players_checked', 'N/A')}\nMatches Found: {kwargs.get('matches_found', 0)}",
                 "inline": True
             })
@@ -109,7 +109,7 @@ async def log_analytics(event_type, **kwargs):
             if len(kwargs['players_found']) > 3:
                 players_text += f" +{len(kwargs['players_found']) - 3} more"
             embed["fields"].append({
-                "name": "🎯 Players Found",
+                "name": "Players Found",
                 "value": f"```{players_text}```",
                 "inline": False
             })
@@ -124,28 +124,28 @@ async def log_analytics(event_type, **kwargs):
         
         if "reason" in kwargs:
             embed["fields"].append({
-                "name": "📝 Reason",
+                "name": "Reason",
                 "value": kwargs['reason'],
                 "inline": True
             })
     
     elif event_type == "User Selection":
         embed["fields"].append({
-            "name": "🎯 Selection",
+            "name": "Selection",
             "value": f"Player: {kwargs.get('selected_player', 'Unknown')}\nType: {kwargs.get('selection_type', 'Unknown')}",
             "inline": True
         })
         
         if "timeout" in kwargs:
             embed["fields"].append({
-                "name": "⏰ Timeout",
+                "name": "Timeout",
                 "value": f"Duration: {kwargs.get('timeout_duration', 'N/A')}s\nResult: {kwargs['timeout']}",
                 "inline": True
             })
     
     elif event_type == "Bot Health":
         embed["fields"].append({
-            "name": "📈 Metrics",
+            "name": "Metrics",
             "value": f"Questions: {kwargs.get('total_questions', 0)}\nBlocked: {kwargs.get('blocked_questions', 0)}\nErrors: {kwargs.get('error_count', 0)}",
             "inline": True
         })
@@ -157,25 +157,25 @@ async def log_analytics(event_type, **kwargs):
 
 def log_debug(message, details=None):
     """Log debug message"""
-    print(f"🔍 DEBUG: {message}")
+    print(f"DEBUG: {message}")
     asyncio.create_task(log_to_discord("DEBUG", "Debug", message, details))
 
 def log_info(message, details=None):
     """Log info message"""
-    print(f"ℹ️ INFO: {message}")
+    print(f"INFO: {message}")
     asyncio.create_task(log_to_discord("INFO", "Info", message, details))
 
 def log_warning(message, details=None):
     """Log warning message"""
-    print(f"⚠️ WARNING: {message}")
+    print(f"WARNING: {message}")
     asyncio.create_task(log_to_discord("WARNING", "Warning", message, details))
 
 def log_error(message, details=None):
     """Log error message"""
-    print(f"❌ ERROR: {message}")
+    print(f"ERROR: {message}")
     asyncio.create_task(log_to_discord("ERROR", "Error", message, details))
 
 def log_success(message, details=None):
     """Log success message"""
-    print(f"✅ SUCCESS: {message}")
+    print(f"SUCCESS: {message}")
     asyncio.create_task(log_to_discord("SUCCESS", "Success", message, details))

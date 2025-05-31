@@ -2,10 +2,6 @@ import discord
 from config import ANSWERING_CHANNEL, FINAL_ANSWER_LINK, question_map
 from logging_system import log_error, log_analytics
 
-import discord
-from config import ANSWERING_CHANNEL, FINAL_ANSWER_LINK, question_map
-from logging_system import log_error, log_analytics
-
 # -------- MULTI-PLAYER QUESTION PROCESSING --------
 
 async def handle_multi_player_question(ctx, question, matched_players):
@@ -13,7 +9,7 @@ async def handle_multi_player_question(ctx, question, matched_players):
     # Import here to avoid circular imports
     from recent_mentions import check_recent_player_mentions
     
-    print(f"🎯 MULTI-PLAYER QUESTION: Found {len(matched_players)} players, processing all of them")
+    print(f"MULTI-PLAYER QUESTION: Found {len(matched_players)} players, processing all of them")
     
     # Log the multi-player detection
     await log_analytics("Question Processed",
@@ -29,7 +25,7 @@ async def handle_multi_player_question(ctx, question, matched_players):
     recent_mentions = await check_recent_player_mentions(ctx.guild, matched_players)
     
     if recent_mentions:
-        print(f"🚫 BLOCKING: {len(recent_mentions)} of the {len(matched_players)} players have recent mentions")
+        print(f"BLOCKING: {len(recent_mentions)} of the {len(matched_players)} players have recent mentions")
         
         # Block the question since some players were recently mentioned
         try:
@@ -56,7 +52,7 @@ async def handle_multi_player_question(ctx, question, matched_players):
         return True  # Blocked
     else:
         # No recent mentions for any player - approve the multi-player question
-        print(f"✅ APPROVING: Multi-player question with {len(matched_players)} players, no recent mentions")
+        print(f"APPROVING: Multi-player question with {len(matched_players)} players, no recent mentions")
         
         # Add all player names to the question for clarity
         player_list = ", ".join([f"{p['name']} ({p['team']})" for p in matched_players])
@@ -70,31 +66,31 @@ async def handle_multi_player_question(ctx, question, matched_players):
 async def handle_single_player_question(ctx, question, matched_players):
     """Handle questions about a single player"""
     try:
-        print(f"🔍 SINGLE PLAYER: Starting to handle single player question")
-        print(f"🔍 SINGLE PLAYER: Players to check: {[p['name'] for p in matched_players]}")
+        print(f"SINGLE PLAYER: Starting to handle single player question")
+        print(f"SINGLE PLAYER: Players to check: {[p['name'] for p in matched_players]}")
         
         # Import here to avoid circular imports
         from recent_mentions import check_recent_player_mentions
         
-        print(f"🔍 SINGLE PLAYER: About to check recent mentions")
+        print(f"SINGLE PLAYER: About to check recent mentions")
         
         # Single player - check recent mentions
         recent_mentions = await check_recent_player_mentions(ctx.guild, matched_players)
         
-        print(f"🔍 SINGLE PLAYER: Recent mentions result: {len(recent_mentions) if recent_mentions else 0}")
+        print(f"SINGLE PLAYER: Recent mentions result: {len(recent_mentions) if recent_mentions else 0}")
         
         if recent_mentions:
             mention = recent_mentions[0]
             player = mention["player"]
             status = mention["status"]
             
-            print(f"🚫 SINGLE PLAYER: Blocking due to recent mention - {player['name']} ({status})")
+            print(f"BLOCKING: Due to recent mention - {player['name']} ({status})")
             
             try:
                 await ctx.message.delete()
-                print("✅ SINGLE PLAYER: Deleted original message")
+                print("SINGLE PLAYER: Deleted original message")
             except Exception as e:
-                print(f"❌ SINGLE PLAYER: Failed to delete message: {e}")
+                print(f"SINGLE PLAYER: Failed to delete message: {e}")
             
             if status == "answered":
                 error_msg = await ctx.send(f"This player has been asked about recently. There is an answer here: {FINAL_ANSWER_LINK}")
@@ -102,17 +98,17 @@ async def handle_single_player_question(ctx, question, matched_players):
                 error_msg = await ctx.send("This player has been asked about recently, please be patient and wait for an answer.")
             
             await error_msg.delete(delay=8)
-            print("🚫 SINGLE PLAYER: Sent blocking message")
+            print("SINGLE PLAYER: Sent blocking message")
             return True  # Blocked
         else:
-            print("✅ SINGLE PLAYER: No recent mentions, approving question")
+            print("SINGLE PLAYER: No recent mentions, approving question")
             # No recent mentions - approve the question
             await process_approved_question(ctx.channel, ctx.author, question, ctx.message)
-            print("✅ SINGLE PLAYER: Called process_approved_question")
+            print("SINGLE PLAYER: Called process_approved_question")
             return False  # Not blocked, processed
             
     except Exception as e:
-        print(f"❌ SINGLE PLAYER ERROR: {e}")
+        print(f"SINGLE PLAYER ERROR: {e}")
         log_error(f"Error in handle_single_player_question: {e}")
         # Fallback - just approve the question
         await process_approved_question(ctx.channel, ctx.author, question, ctx.message)
@@ -126,9 +122,9 @@ async def process_approved_question(channel, user, question, original_message=No
     if original_message:
         try:
             await original_message.delete()
-            print("✅ Deleted original user message in process_approved_question")
+            print("Deleted original user message in process_approved_question")
         except Exception as e:
-            print(f"❌ Failed to delete original message in process_approved_question: {e}")
+            print(f"Failed to delete original message in process_approved_question: {e}")
     
     answering_channel = discord.utils.get(channel.guild.text_channels, name=ANSWERING_CHANNEL)
     
@@ -140,14 +136,14 @@ async def process_approved_question(channel, user, question, original_message=No
         try:
             # Post to answering channel
             posted_message = await answering_channel.send(formatted_message)
-            print(f"✅ Posted question to #{ANSWERING_CHANNEL}")
+            print(f"Posted question to #{ANSWERING_CHANNEL}")
             
             # Store the question mapping for later reference
             question_map[posted_message.id] = {
                 "question": question,
                 "asker_id": user.id
             }
-            print(f"✅ Stored question mapping for message ID {posted_message.id}")
+            print(f"Stored question mapping for message ID {posted_message.id}")
             
             # ENHANCED: Log analytics for approved question
             await log_analytics("Question Processed",
@@ -162,7 +158,7 @@ async def process_approved_question(channel, user, question, original_message=No
             # Send confirmation message
             confirmation_msg = await channel.send(f"✅ Your question has been posted for experts to answer.")
             await confirmation_msg.delete(delay=5)
-            print("✅ Confirmation message sent and will be deleted in 5 seconds")
+            print("Confirmation message sent and will be deleted in 5 seconds")
             
         except Exception as e:
             log_error(f"Failed to post question to answering channel: {e}")
