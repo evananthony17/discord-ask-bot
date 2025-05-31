@@ -2,10 +2,15 @@ import discord
 from config import ANSWERING_CHANNEL, FINAL_ANSWER_LINK, question_map
 from logging_system import log_error, log_analytics
 
+import discord
+from config import ANSWERING_CHANNEL, FINAL_ANSWER_LINK, question_map
+from logging_system import log_error, log_analytics
+
 # -------- MULTI-PLAYER QUESTION PROCESSING --------
 
 async def handle_multi_player_question(ctx, question, matched_players):
     """Handle questions about multiple players (e.g. 'How are Judge, Ohtani, and Acuña doing?')"""
+    # Import here to avoid circular imports
     from recent_mentions import check_recent_player_mentions
     
     print(f"🎯 MULTI-PLAYER QUESTION: Found {len(matched_players)} players, processing all of them")
@@ -64,32 +69,54 @@ async def handle_multi_player_question(ctx, question, matched_players):
 
 async def handle_single_player_question(ctx, question, matched_players):
     """Handle questions about a single player"""
-    from recent_mentions import check_recent_player_mentions
-    
-    # Single player - check recent mentions
-    recent_mentions = await check_recent_player_mentions(ctx.guild, matched_players)
-    
-    if recent_mentions:
-        mention = recent_mentions[0]
-        player = mention["player"]
-        status = mention["status"]
+    try:
+        print(f"🔍 SINGLE PLAYER: Starting to handle single player question")
+        print(f"🔍 SINGLE PLAYER: Players to check: {[p['name'] for p in matched_players]}")
         
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        # Import here to avoid circular imports
+        from recent_mentions import check_recent_player_mentions
         
-        if status == "answered":
-            error_msg = await ctx.send(f"This player has been asked about recently. There is an answer here: {FINAL_ANSWER_LINK}")
+        print(f"🔍 SINGLE PLAYER: About to check recent mentions")
+        
+        # Single player - check recent mentions
+        recent_mentions = await check_recent_player_mentions(ctx.guild, matched_players)
+        
+        print(f"🔍 SINGLE PLAYER: Recent mentions result: {len(recent_mentions) if recent_mentions else 0}")
+        
+        if recent_mentions:
+            mention = recent_mentions[0]
+            player = mention["player"]
+            status = mention["status"]
+            
+            print(f"🚫 SINGLE PLAYER: Blocking due to recent mention - {player['name']} ({status})")
+            
+            try:
+                await ctx.message.delete()
+                print("✅ SINGLE PLAYER: Deleted original message")
+            except Exception as e:
+                print(f"❌ SINGLE PLAYER: Failed to delete message: {e}")
+            
+            if status == "answered":
+                error_msg = await ctx.send(f"This player has been asked about recently. There is an answer here: {FINAL_ANSWER_LINK}")
+            else:
+                error_msg = await ctx.send("This player has been asked about recently, please be patient and wait for an answer.")
+            
+            await error_msg.delete(delay=8)
+            print("🚫 SINGLE PLAYER: Sent blocking message")
+            return True  # Blocked
         else:
-            error_msg = await ctx.send("This player has been asked about recently, please be patient and wait for an answer.")
-        
-        await error_msg.delete(delay=8)
-        return True  # Blocked
-    else:
-        # No recent mentions - approve the question
+            print("✅ SINGLE PLAYER: No recent mentions, approving question")
+            # No recent mentions - approve the question
+            await process_approved_question(ctx.channel, ctx.author, question, ctx.message)
+            print("✅ SINGLE PLAYER: Called process_approved_question")
+            return False  # Not blocked, processed
+            
+    except Exception as e:
+        print(f"❌ SINGLE PLAYER ERROR: {e}")
+        log_error(f"Error in handle_single_player_question: {e}")
+        # Fallback - just approve the question
         await process_approved_question(ctx.channel, ctx.author, question, ctx.message)
-        return False  # Not blocked, processed
+        return False
 
 # -------- QUESTION PROCESSING --------
 

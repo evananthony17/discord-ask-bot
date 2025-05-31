@@ -41,44 +41,58 @@ def extract_potential_names(text):
         'tomorrow', 'this', 'that', 'these', 'those', 'season', 'year', 
         'game', 'games', 'update', 'on', 'for', 'with', 'any', 'get', 'stats',
         'more', 'like', 'than', 'then', 'just', 'only', 'also', 'even',
-        'much', 'many', 'some', 'all', 'most', 'best', 'worst', 'better', 'worse'
+        'much', 'many', 'some', 'all', 'most', 'best', 'worst', 'better', 'worse',
+        # ENHANCED: Add common words that match player names
+        'has', 'have', 'had', 'his', 'her', 'him', 'them', 'they', 'their',
+        'been', 'being', 'be', 'am', 'as', 'at', 'an', 'or', 'if', 'it',
+        'up', 'out', 'in', 'to', 'of', 'my', 'me', 'we', 'us', 'you', 'your'
     }
+    
+    # ENHANCED: Add minimum length requirement for individual words
+    min_word_length = 4  # "has" (3 chars) won't match anymore
     
     # Split into words and remove stop words
     words = text_normalized.split()
-    filtered_words = [w for w in words if w not in stop_words and len(w) > 1]
+    filtered_words = [w for w in words if w not in stop_words and len(w) >= min_word_length]
     
     # Look for 2-word combinations that might be names (like "Christian Moore")
     for i in range(len(filtered_words) - 1):
         name_combo = f"{filtered_words[i]} {filtered_words[i+1]}"
-        if len(name_combo) >= 4:
+        if len(name_combo) >= 7:  # Minimum reasonable full name length
             potential_names.append(name_combo)
     
     # Look for 3-word combinations (like "Juan Soto Jr")
     for i in range(len(filtered_words) - 2):
         name_combo = f"{filtered_words[i]} {filtered_words[i+1]} {filtered_words[i+2]}"
-        if len(name_combo) >= 7:
+        if len(name_combo) >= 10:  # Minimum reasonable 3-word name length
             potential_names.append(name_combo)
     
-    # Also add individual words that might be last names (but filter out obvious non-names)
+    # ENHANCED: Only add individual words if they're reasonably long and look name-like
     non_name_words = {
         'stats', 'news', 'info', 'question', 'playing', 'game', 'season', 'year', 'team',
         'downdate', 'upgrade', 'downgrade', 'update', 'like', 'more', 'less', 'better', 'worse',
         'good', 'bad', 'nice', 'cool', 'awesome', 'great', 'terrible', 'amazing', 'fantastic',
-        'horrible', 'perfect', 'awful', 'wonderful', 'excellent', 'outstanding', 'impressive'
+        'horrible', 'perfect', 'awful', 'wonderful', 'excellent', 'outstanding', 'impressive',
+        'doing', 'going', 'coming', 'looking', 'getting', 'having', 'being', 'seeing',
+        'thinking', 'feeling', 'knowing', 'saying', 'telling', 'asking', 'giving', 'taking'
     }
+    
     for word in filtered_words:
-        if len(word) >= 3 and word not in non_name_words:
+        if (len(word) >= min_word_length and 
+            word not in non_name_words and 
+            not word.isdigit() and  # No pure numbers
+            word.isalpha()):  # Only alphabetic characters
             potential_names.append(word)
     
-    # Special case: if the input is very short and simple, add it directly
-    if len(words) <= 2 and all(len(w) >= 3 for w in words):
+    # Special case: if the input is very short and simple, add it directly (but still filter)
+    if len(words) <= 2 and all(len(w) >= min_word_length and w not in stop_words for w in words):
         original_simple = ' '.join(words)
         if original_simple not in potential_names:
             potential_names.append(original_simple)
     
-    # Add the original text as fallback (normalized)
-    potential_names.append(text_normalized)
+    # Add the original text as fallback (normalized) - but only if it's reasonable length
+    if len(text_normalized.replace(' ', '')) >= min_word_length:
+        potential_names.append(text_normalized)
     
     # Remove duplicates while preserving order
     unique_names = []
@@ -88,7 +102,7 @@ def extract_potential_names(text):
             unique_names.append(name)
             seen.add(name)
     
-    print(f"🔍 NAME EXTRACTION: Found {len(unique_names)} potential names from '{text}'")
+    print(f"🔍 NAME EXTRACTION: Found {len(unique_names)} potential names from '{text}': {unique_names}")
     return unique_names
 
 # -------- LAST NAME MATCHING --------
