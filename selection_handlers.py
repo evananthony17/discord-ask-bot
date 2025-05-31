@@ -114,6 +114,7 @@ def cancel_selection_timeout(user_id):
 async def handle_disambiguation_selection(reaction, user, selected_player, selection_data):
     """Handle disambiguation selection (user picking which player they meant)"""
     from recent_mentions import check_recent_player_mentions
+    from bot_logic import process_approved_question
     
     print(f"🎯 User disambiguated to: {selected_player['name']} ({selected_player['team']})")
     
@@ -150,9 +151,6 @@ async def handle_disambiguation_selection(reaction, user, selected_player, selec
         # Append selected player info to make it clear which player they meant
         modified_question = f"{selection_data['original_question']} ({selected_player['name']} - {selected_player['team']})"
         print(f"🔧 Modified question: {modified_question}")
-        
-        # Import here to avoid circular imports
-        from bot_logic import process_approved_question
         
         await process_approved_question(
             reaction.message.channel,
