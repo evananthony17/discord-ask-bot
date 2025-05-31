@@ -135,7 +135,7 @@ def check_last_name_match(potential_name, player_name):
 # -------- FUZZY MATCHING --------
 
 def fuzzy_match_players(text, max_results=8):
-    """Fuzzy match player names in text and return top matches"""
+    """FIXED: Fuzzy match player names and return ALL matches above threshold"""
     print(f"🔍 FUZZY MATCH: Starting for '{text}'")
     
     if not players_data:
@@ -146,27 +146,20 @@ def fuzzy_match_players(text, max_results=8):
     potential_names = extract_potential_names(text)
     matches = []
     
-def fuzzy_match_players(text, max_results=8):
-    """Fuzzy match player names in text and return top matches"""
-    print(f"🔍 FUZZY MATCH: Starting for '{text}'")
-    
-    if not players_data:
-        print("🔍 FUZZY MATCH: No players data available")
-        return []
-    
-    # Extract potential player names from the text
-    potential_names = extract_potential_names(text)
-    matches = []
+    print(f"🔍 FUZZY MATCH: Testing {len(potential_names)} potential names: {potential_names}")
     
     # Try fuzzy matching with each potential name
     for potential_name in potential_names:
-        for player in players_data:
+        print(f"🔍 FUZZY MATCH: Testing potential name: '{potential_name}'")
+        
+        for i, player in enumerate(players_data):
             player_name = normalize_name(player['name'])
             
             # First check for special last name match
             lastname_sim, is_lastname_match = check_last_name_match(potential_name, player_name)
             
             if is_lastname_match and lastname_sim >= 0.75:
+                print(f"✅ LAST NAME MATCH: '{potential_name}' → {player['name']} ({player['team']}) = {lastname_sim:.3f}")
                 matches.append((player, lastname_sim))
                 continue
             
@@ -193,7 +186,12 @@ def fuzzy_match_players(text, max_results=8):
                 threshold = 0.7
             
             if best_similarity >= threshold:
+                print(f"✅ FUZZY MATCH: '{potential_name}' → {player['name']} ({player['team']}) = {best_similarity:.3f} (threshold: {threshold})")
                 matches.append((player, best_similarity))
+            elif best_similarity >= 0.5:  # Log near misses for debugging
+                print(f"❌ NEAR MISS: '{potential_name}' → {player['name']} ({player['team']}) = {best_similarity:.3f} (needed: {threshold})")
+    
+    print(f"🔍 FUZZY MATCH: Found {len(matches)} total matches before deduplication")
     
     # Sort by score and remove duplicates
     matches.sort(key=lambda x: x[1], reverse=True)
@@ -203,8 +201,14 @@ def fuzzy_match_players(text, max_results=8):
     for player, score in matches:
         player_key = f"{normalize_name(player['name'])}|{normalize_name(player['team'])}"
         if player_key not in seen_players and len(unique_matches) < max_results:
+            print(f"✅ ADDING MATCH: {player['name']} ({player['team']}) = {score:.3f}")
             unique_matches.append(player)
             seen_players.add(player_key)
+        else:
+            if player_key in seen_players:
+                print(f"🔄 DUPLICATE SKIPPED: {player['name']} ({player['team']})")
+            else:
+                print(f"📊 MAX RESULTS REACHED: Skipping {player['name']} ({player['team']})")
     
     print(f"🔍 FUZZY MATCH: Returning {len(unique_matches)} unique matches")
     return unique_matches
