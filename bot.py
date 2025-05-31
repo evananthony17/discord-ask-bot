@@ -1,1247 +1,126 @@
 import discord
 from discord.ext import commands
-import json
-import re
-import os
 import asyncio
-from collections import defaultdict
-import unicodedata
-from difflib import SequenceMatcher
 from datetime import datetime, timedelta
-import aiohttp
 
-# Configuration
-DISCORD_TOKEN = os.environ.get("DISCORD_TOKEN")
-WEBHOOK_LOGS_URL = os.environ.get("WEBHOOK_LOGS_URL", "")  # Discord webhook for logs
-LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")  # DEBUG, INFO, WARNING, ERROR
-
-# Log levels
-LOG_LEVELS = {
-    "DEBUG": 0,
-    "INFO": 1, 
-    "WARNING": 2,
-    "ERROR": 3
-}
-
-async def log_to_discord(level, message, details=None):
-    """Send logs to Discord webhook"""
-    if not WEBHOOK_LOGS_URL:
-        return  # No webhook configured
-    
-    # Check if we should log this level
-    current_level = LOG_LEVELS.get(LOG_LEVEL, 1)
-    msg_level = LOG_LEVELS.get(level, 1)
-    
-    if msg_level < current_level:
-        return  # Log level too low
-    
-    # Color coding for different log levels
-    colors = {
-        "DEBUG": 0x808080,    # Gray
-        "INFO": 0x0099ff,     # Blue  
-        "WARNING": 0xff9900,  # Orange
-        "ERROR": 0xff0000     # Red
-    }
-    
-    embed = {
-        "title": f"{level} - Baseball Bot",
-        "description": f"```{message}```",
-        "color": colors.get(level, 0x0099ff),
-        "timestamp": datetime.utcnow().isoformat(),
-        "footer": {"text": f"Level: {level}"}
-    }
-    
-    if details:
-        embed["fields"] = [{"name": "Details", "value": f"```{details}```", "inline": False}]
-    
-    payload = {"embeds": [embed]}
-    
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.post(WEBHOOK_LOGS_URL, json=payload) as response:
-                if response.status != 204:
-                    print(f"❌ Failed to send log to Discord: {response.status}")
-    except Exception as e:
-        print(f"❌ Error sending log to Discord: {e}")
-
-def log_debug(message, details=None):
-    """Log debug message"""
-    print(f"🔍 DEBUG: {message}")
-    asyncio.create_task(log_to_discord("DEBUG", message, details))
-
-def log_info(message, details=None):
-    """Log info message"""
-    print(f"ℹ️ INFO: {message}")
-    asyncio.create_task(log_to_discord("INFO", message, details))
-
-def log_warning(message, details=None):
-    """Log warning message"""
-    print(f"⚠️ WARNING: {message}")
-    asyncio.create_task(log_to_discord("WARNING", message, details))
-
-def log_error(message, details=None):
-    """Log error message"""
-    print(f"❌ ERROR: {message}")
-    asyncio.create_task(log_to_discord("ERROR", message, details))
-
-# -------- CONFIG --------
-SUBMISSION_CHANNEL = "ask-the-experts"
-ANSWERING_CHANNEL = "question-reposting"
-FINAL_ANSWER_CHANNEL = "answered-by-expert"
-FAQ_LINK = "https://discord.com/channels/849784755388940290/1374490028549603408"
-FINAL_ANSWER_LINK = "https://discord.com/channels/849784755388940290/1377375716286533823"
-
-# -------- TIMING CONFIG --------
-RECENT_MENTION_HOURS = 12  # How far back to check for recent mentions
-RECENT_MENTION_LIMIT = 100  # How many messages to check per channel (reduced to help with rate limiting)
-SELECTION_TIMEOUT = 30  # How long to wait for user selection (seconds)
-PRE_SELECTION_DELAY = 0.5  # Small delay before posting selection message
+# Import all our modules
+from config import (
+    DISCORD_TOKEN, SUBMISSION_CHANNEL, ANSWERING_CHANNEL, FINAL_ANSWER_CHANNEL,
+    FINAL_ANSWER_LINK, PRE_SELECTION_DELAY, REACTIONS, 
+    banned_categories, question_map, pending_selections, timeout_tasks, players_data
+)
+from logging_system import log_info, log_error, log_success, log_analytics
+from utils import load_words_from_json, load_players_from_json, load_nicknames_from_json, is_likely_player_request
+from validation import validate_question
+from player_matching import check_player_mentioned
+from recent_mentions import check_recent_player_mentions, check_fallback_recent_mentions
+from selection_handlers import start_selection_timeout, cancel_selection_timeout, handle_disambiguation_selection, handle_block_selection, cleanup_invalid_selection
+from bot_logic import process_approved_question, get_potential_player_words
 
 # -------- SETUP INTENTS --------
 intents = discord.Intents.default()
 intents.guilds = True
 intents.messages = True
-intents.message_content = True  # Required for prefix commands
+intents.message_content = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
-
-# -------- BANNED WORD CATEGORIES --------
-banned_categories = {
-    "profanity": {
-        "words": [],
-        "response": "Your question contains profanity and was removed."
-    },
-    "banned_topics": {
-        "words": ["lock", "locks", "auto clicker", "clicker", "just pulled", "pulled", "who do I invest in", "NFT", "DM", "Crypto", "OnlyFans"],
-        "response": f"This topic is not allowed, please consult the FAQs: {FAQ_LINK}"
-    }
-}
-
-# -------- TRACK ORIGINAL QUESTIONS --------
-question_map = {}  # message_id: {"question": str, "asker_id": int}
-pending_selections = {}  # user_id: {"message": Message, "players": [...], "original_question": str, "locked": bool}
-
-# -------- PLAYER NAMES --------
-players_data = []  # Will hold the MLB API data
-player_nicknames = {}  # Global variable to store loaded nicknames
-
-# -------- UTILITY FUNCTIONS --------
-
-def normalize_name(name):
-    """Normalize player names for better matching - handle accents, case, punctuation"""
-    
-    # Remove accents and diacritics (Acuña → Acuna)
-    normalized = unicodedata.normalize('NFD', name)
-    ascii_name = ''.join(c for c in normalized if unicodedata.category(c) != 'Mn')
-    
-    # Convert to lowercase
-    ascii_name = ascii_name.lower()
-    
-    # Handle apostrophes consistently - remove them (O'Neil → oneil)
-    ascii_name = ascii_name.replace("'", "").replace("'", "")  # Handle both straight and curly apostrophes
-    
-    # Remove common punctuation and extra spaces
-    ascii_name = ascii_name.replace('.', '').replace(',', '').replace('-', ' ')
-    ascii_name = ' '.join(ascii_name.split())  # Remove extra whitespace
-    
-    return ascii_name
-
-def load_nicknames_from_json(filename):
-    """Load player nicknames from a JSON file"""
-    global player_nicknames
-    
-    try:
-        if os.path.exists(filename):
-            with open(filename, 'r', encoding='utf-8') as f:
-                loaded_nicknames = json.load(f)
-                # Convert all keys to lowercase for case-insensitive matching
-                player_nicknames = {k.lower(): v.lower() for k, v in loaded_nicknames.items()}
-                log_info(f"NICKNAMES: Loaded from {filename}: {len(player_nicknames)} nicknames")
-                
-                # Show a few examples for verification
-                if player_nicknames:
-                    examples = list(player_nicknames.items())[:5]
-                    log_debug(f"NICKNAMES: Example mappings: {examples}")
-                return True
-        else:
-            log_warning(f"NICKNAMES: File not found: {filename} - creating example file")
-            
-            # Create example file with common nicknames
-            example_nicknames = {
-                "jram": "jose ramirez",
-                "judge": "aaron judge",
-                "trout": "mike trout",
-                "vlad jr": "vladimir guerrero jr",
-                "vladdy": "vladimir guerrero jr",
-                "tatis": "fernando tatis jr",
-                "tatis jr": "fernando tatis jr",
-                "big papi": "david ortiz",
-                "papi": "david ortiz",
-                "miggy": "miguel cabrera",
-                "ohtani": "shohei ohtani",
-                "sho time": "shohei ohtani",
-                "showtime": "shohei ohtani",
-                "mookie": "mookie betts",
-                "freddie": "freddie freeman",
-                "bryce": "bryce harper",
-                "harper": "bryce harper",
-                "machado": "manny machado",
-                "altuve": "jose altuve",
-                "lindor": "francisco lindor",
-                "degrom": "jacob degrom",
-                "scherzer": "max scherzer",
-                "mad max": "max scherzer",
-                "verlander": "justin verlander",
-                "jv": "justin verlander",
-                "kershaw": "clayton kershaw",
-                "cole": "gerrit cole"
-            }
-            
-            with open(filename, 'w', encoding='utf-8') as f:
-                json.dump(example_nicknames, f, indent=2, ensure_ascii=False)
-            
-            # Load the newly created file
-            player_nicknames = {k.lower(): v.lower() for k, v in example_nicknames.items()}
-            log_info(f"NICKNAMES: Created and loaded example {filename} with {len(player_nicknames)} nicknames")
-            return True
-            
-    except Exception as e:
-        log_error(f"NICKNAMES: Error loading from {filename}: {e}")
-        player_nicknames = {}
-        return False
-
-def expand_nicknames(text):
-    """Convert common baseball nicknames to full player names"""
-    log_debug(f"NICKNAME: Input text: '{text}', Available nicknames: {len(player_nicknames)}")
-    
-    if not player_nicknames:
-        log_debug("NICKNAME: No nicknames loaded - returning original text")
-        return text  # No nicknames loaded
-        
-    text_lower = text.lower().strip()
-    log_debug(f"NICKNAME: Normalized input: '{text_lower}'")
-    
-    # Check for exact nickname matches
-    if text_lower in player_nicknames:
-        expanded_name = player_nicknames[text_lower]
-        log_info(f"NICKNAME EXPANSION: '{text}' → '{expanded_name}'")
-        return expanded_name
-    
-    # Check for nicknames within the text
-    words = text_lower.split()
-    log_debug(f"NICKNAME: Split into words: {words}")
-    expanded_words = []
-    nickname_found = False
-    
-    for word in words:
-        if word in player_nicknames:
-            expanded_name = player_nicknames[word]
-            expanded_words.append(expanded_name)
-            nickname_found = True
-            log_info(f"NICKNAME EXPANSION: '{word}' in '{text}' → '{expanded_name}'")
-        else:
-            expanded_words.append(word)
-            log_debug(f"NICKNAME: No match for word '{word}'")
-    
-    if nickname_found:
-        result = ' '.join(expanded_words)
-        log_info(f"NICKNAME RESULT: '{text}' → '{result}'")
-        return result
-    
-    log_debug(f"NICKNAME: No nicknames found in '{text}' - returning original")
-    return text  # No nicknames found, return original
-
-def is_likely_player_request(text):
-    """Determine if text is likely asking about a player vs casual conversation"""
-    
-    normalized = normalize_name(text)
-    words = normalized.split()
-    
-    # Very short queries are probably not player requests unless they look like names
-    if len(words) == 1 and len(words[0]) <= 4:
-        print(f"🚫 EARLY FILTER: Single short word '{words[0]}' - probably not a player request")
-        return False
-    
-    # Look for obvious non-player patterns using WORD BOUNDARIES
-    casual_patterns = [
-        r'\bmore like\b',     # "update? More like downdate!"
-        r'\blol\b',
-        r'\bhaha\b', 
-        r'\bthanks\b',
-        r'\bthank you\b',
-        r'\bgood job\b',
-        r'\bnice job\b', 
-        r'\bwell done\b',
-        r'\bcool\b',
-        r'\bwow\b',
-        r'\byeah\b',
-        r'\byes\b',
-        r'\bno\b',
-        r'\bok\b',           # This will match "ok" but NOT "looking"
-        r'\bokay\b',
-        r'\bwhat the\b',
-        r'\bwtf\b',
-        r'\bomg\b'
-    ]
-    
-    for pattern in casual_patterns:
-        if re.search(pattern, normalized):
-            print(f"🚫 EARLY FILTER: Found casual pattern '{pattern}' in '{text}'")
-            return False
-    
-    # If it's a short question with no obvious player name indicators, probably casual
-    if '?' in text and len(words) <= 3:
-        # Check if any words in the original text look like common names (capitalized)
-        original_words = text.split()
-        name_like = False
-        for word in original_words:
-            clean_word = word.strip('.,!?')
-            if len(clean_word) >= 5 and clean_word[0].isupper():  # Capitalized and reasonably long
-                name_like = True
-                break
-        
-        if not name_like:
-            print(f"🚫 EARLY FILTER: Short question '{text}' with no name-like words")
-            return False
-    
-    # Check for made-up words that aren't likely player names
-    common_suffixes = ['date', 'grade', 'side', 'time', 'line', 'ward']
-    made_up_words = []
-    
-    for word in words:
-        if len(word) > 6:  # Only check longer words
-            # Check if it ends with common suffixes but isn't a real name
-            for suffix in common_suffixes:
-                if word.endswith(suffix) and word not in ['update', 'upgrade', 'outside']:
-                    made_up_words.append(word)
-                    print(f"🚫 EARLY FILTER: '{word}' looks like a made-up word (ends with '{suffix}')")
-    
-    # If most of the meaningful words seem made-up, probably not a player request
-    meaningful_words = [w for w in words if len(w) >= 4]
-    if len(meaningful_words) > 0 and len(made_up_words) / len(meaningful_words) > 0.5:
-        print(f"🚫 EARLY FILTER: Too many made-up words ({len(made_up_words)}/{len(meaningful_words)})")
-        return False
-    
-    # If we get here, it might be a player request
-    print(f"✅ EARLY FILTER: '{text}' looks like it could be a player request")
-    return True
-
-def format_time_ago(time_delta):
-    """Format a timedelta object into a human-readable string"""
-    if time_delta.days > 0:
-        return f"{time_delta.days} day{'s' if time_delta.days > 1 else ''}"
-    elif time_delta.seconds > 3600:
-        hours = time_delta.seconds // 3600
-        return f"{hours} hour{'s' if hours > 1 else ''}"
-    elif time_delta.seconds > 60:
-        minutes = time_delta.seconds // 60
-        return f"{minutes} minute{'s' if minutes > 1 else ''}"
-    else:
-        return "just now"
-
-def contains_banned_words(question):
-    """Check if question contains any banned words"""
-    banned_words = ['spam', 'test123', 'ignore']  # Add your banned words here
-    question_lower = question.lower()
-    
-    for word in banned_words:
-        if word in question_lower:
-            return True
-    return False
-
-async def handle_selection_timeout(user_id, ctx):
-    """Handle timeout for player selection"""
-    await asyncio.sleep(SELECTION_TIMEOUT)  # Wait for configured timeout
-    
-    if user_id in pending_selections and not pending_selections[user_id]["locked"]:
-        print(f"🕒 Selection timed out for user {user_id} after {SELECTION_TIMEOUT} seconds")
-        data = pending_selections[user_id]
-        
-        # Clean up selection message
-        try:
-            await data["message"].delete()
-            print("✅ Deleted timed-out selection message")
-        except Exception as e:
-            print(f"❌ Failed to delete timed-out message: {e}")
-        
-        # Clean up original message
-        try:
-            await data["original_user_message"].delete()
-            print("✅ Deleted original user message after timeout")
-        except Exception as e:
-            print(f"❌ Failed to delete original message: {e}")
-        
-        # Remove from pending
-        del pending_selections[user_id]
-        
-        # Handle different timeout types
-        if data.get("type") == "block_selection":
-            print("⏰ Block selection timed out - question blocked by default")
-            return
-        elif data.get("type") == "disambiguation_selection":
-            print("⏰ Disambiguation selection timed out - blocking question")
-            return
-        
-        # Fallback to normal processing (shouldn't happen with current logic)
-        # Note: original message already deleted above, so pass None
-        question = data["original_question"]
-        await process_approved_question(ctx.channel, ctx.author, question, None)
-
-def load_words_from_json(filename):
-    try:
-        with open(filename, "r", encoding="utf-8") as file:
-            data = json.load(file)
-            return [word.strip().lower() for word in data]
-    except Exception as e:
-        print(f"Error loading {filename}: {e}")
-        return []
-
-def load_players_from_json(filename):
-    print(f"🔍 LOADING PLAYERS: Attempting to load {filename}")
-    try:
-        import os
-        print(f"🔍 LOADING PLAYERS: Current working directory: {os.getcwd()}")
-        print(f"🔍 LOADING PLAYERS: Files in directory: {os.listdir('.')}")
-        
-        if not os.path.exists(filename):
-            print(f"❌ LOADING PLAYERS: File {filename} does not exist!")
-            return []
-            
-        with open(filename, "r", encoding="utf-8") as file:
-            data = json.load(file)
-            print(f"🔍 LOADING PLAYERS: Successfully loaded JSON data")
-            print(f"🔍 LOADING PLAYERS: Data type: {type(data)}")
-            print(f"🔍 LOADING PLAYERS: Data length: {len(data) if isinstance(data, list) else 'not a list'}")
-            
-            if isinstance(data, list) and len(data) > 0:
-                print(f"🔍 LOADING PLAYERS: First player: {data[0]}")
-            
-            return data if isinstance(data, list) else []
-    except FileNotFoundError as e:
-        print(f"❌ LOADING PLAYERS: File not found - {filename}: {e}")
-        return []
-    except json.JSONDecodeError as e:
-        print(f"❌ LOADING PLAYERS: JSON decode error in {filename}: {e}")
-        return []
-    except Exception as e:
-        print(f"❌ LOADING PLAYERS: Unexpected error loading {filename}: {e}")
-        return []
-
-def extract_potential_names(text):
-    """Extract potential player names from text with improved logic"""
-    # First expand nicknames
-    expanded_text = expand_nicknames(text)
-    if expanded_text != text:
-        print(f"🔍 NAME EXTRACTION: Expanded '{text}' to '{expanded_text}'")
-        text = expanded_text
-    
-    text_normalized = normalize_name(text)
-    potential_names = []
-    
-    # Remove common question words and phrases
-    stop_words = {
-        'how', 'is', 'was', 'are', 'were', 'doing', 'playing', 'performed', 
-        'the', 'a', 'an', 'about', 'what', 'when', 'where', 'why', 'who',
-        'should', 'would', 'could', 'can', 'will', 'today', 'yesterday', 
-        'tomorrow', 'this', 'that', 'these', 'those', 'season', 'year', 
-        'game', 'games', 'update', 'on', 'for', 'with', 'any', 'get', 'stats',
-        'more', 'like', 'than', 'then', 'just', 'only', 'also', 'even',
-        'much', 'many', 'some', 'all', 'most', 'best', 'worst', 'better', 'worse'
-    }
-    
-    # Split into words and remove stop words
-    words = text_normalized.split()
-    filtered_words = [w for w in words if w not in stop_words and len(w) > 1]
-    
-    # Try to find name combinations (first + last name patterns)
-    
-    # Look for 2-word combinations that might be names (like "Christian Moore")
-    for i in range(len(filtered_words) - 1):
-        name_combo = f"{filtered_words[i]} {filtered_words[i+1]}"
-        if len(name_combo) >= 4:  # Lowered from 5 to catch shorter names
-            potential_names.append(name_combo)
-    
-    # Look for 3-word combinations (like "Juan Soto Jr")
-    for i in range(len(filtered_words) - 2):
-        name_combo = f"{filtered_words[i]} {filtered_words[i+1]} {filtered_words[i+2]}"
-        if len(name_combo) >= 7:  # Lowered from 8
-            potential_names.append(name_combo)
-    
-    # Also add individual words that might be last names (but filter out obvious non-names)
-    non_name_words = {
-        'stats', 'news', 'info', 'question', 'playing', 'game', 'season', 'year', 'team',
-        'downdate', 'upgrade', 'downgrade', 'update', 'like', 'more', 'less', 'better', 'worse',
-        'good', 'bad', 'nice', 'cool', 'awesome', 'great', 'terrible', 'amazing', 'fantastic',
-        'horrible', 'perfect', 'awful', 'wonderful', 'excellent', 'outstanding', 'impressive'
-    }
-    for word in filtered_words:
-        if len(word) >= 3 and word not in non_name_words:
-            potential_names.append(word)
-    
-    # Special case: if the input is very short and simple, add it directly
-    if len(words) <= 2 and all(len(w) >= 3 for w in words):
-        original_simple = ' '.join(words)
-        if original_simple not in potential_names:
-            potential_names.append(original_simple)
-    
-    # Add the original text as fallback (normalized)
-    potential_names.append(text_normalized)
-    
-    print(f"🔍 NAME EXTRACTION: Found {len(potential_names)} potential names from '{text}'")
-    return potential_names
-
-def check_last_name_match(potential_name, player_name):
-    """Special checking for single-word inputs that might be last names"""
-    if ' ' in potential_name:  # Only for single words
-        return None, False
-    
-    if len(potential_name) < 3 or len(potential_name) > 12:  # Reasonable last name length
-        return None, False
-    
-    # Get the player's last name
-    name_parts = player_name.split()
-    if len(name_parts) < 2:
-        return None, False
-    
-    player_last_name = name_parts[-1]
-    
-    # Check for very close last name match
-    from difflib import SequenceMatcher
-    similarity = SequenceMatcher(None, potential_name, player_last_name).ratio()
-    
-    # Special case: if it's a very close match to a last name, be more lenient
-    if similarity >= 0.75:  # Lower threshold for last name only
-        print(f"🎯 LAST NAME MATCH: '{potential_name}' vs last name '{player_last_name}' = {similarity:.3f}")
-        return similarity, True
-    
-    return None, False
-
-def fuzzy_match_players(text, max_results=8):  # Increased from 7 to 8
-    """Fuzzy match player names in text and return top matches - IMPROVED VERSION"""
-    from difflib import SequenceMatcher
-    
-    print(f"🔍 FUZZY MATCH DEBUG: Starting fuzzy match for text: '{text}'")
-    print(f"🔍 FUZZY MATCH DEBUG: Will check against {len(players_data)} total players")
-    
-    if not players_data:
-        print("🔍 FUZZY MATCH DEBUG: No players data available")
-        return []
-    
-    # Extract potential player names from the text
-    potential_names = extract_potential_names(text)
-    print(f"🔍 FUZZY MATCH DEBUG: Extracted potential names: {potential_names}")
-    
-    matches = []
-    
-    # Try fuzzy matching with each potential name
-    for potential_name in potential_names:
-        # Only log for important potential names to reduce spam
-        if len(potential_name) >= 6:
-            print(f"🔍 FUZZY MATCH DEBUG: Trying potential name: '{potential_name}'")
-        
-        # DEBUG: Count how many Acuña players we check
-        acuna_players_checked = 0
-        acuna_players_matched = 0
-        
-        for player in players_data:
-            player_name = normalize_name(player['name'])  # ← NORMALIZE DATABASE NAMES TOO
-            
-            # DEBUG: Count Acuña players
-            if "acuna" in player_name:
-                acuna_players_checked += 1
-                print(f"🔍 ACUNA DEBUG #{acuna_players_checked}: Checking potential '{potential_name}' vs Acuña player '{player['name']}' (normalized: '{player_name}')")
-            
-            # First check for special last name match
-            lastname_sim, is_lastname_match = check_last_name_match(potential_name, player_name)
-            
-            if is_lastname_match and lastname_sim >= 0.75:
-                # Special last name match - use more lenient threshold
-                matches.append((player, lastname_sim))
-                print(f"🎯 LAST NAME SPECIAL MATCH: '{potential_name}' matched {player['name']} (last name score: {lastname_sim:.3f})")
-                
-                # DEBUG: Count Acuña matches
-                if "acuna" in player_name:
-                    acuna_players_matched += 1
-                    print(f"🔍 ACUNA DEBUG: ✅ LAST NAME MATCH #{acuna_players_matched} - Added {player['name']} with score {lastname_sim:.3f}")
-                continue
-            
-            # Regular fuzzy matching
-            # Calculate similarity
-            similarity = SequenceMatcher(None, potential_name, player_name).ratio()
-            
-            # Special handling for last names - if potential name matches last name well, boost score
-            player_last_name = player_name.split()[-1] if ' ' in player_name else player_name
-            last_name_similarity = SequenceMatcher(None, potential_name, player_last_name).ratio()
-            
-            # Check for exact last name match (case insensitive)
-            exact_last_name_match = potential_name == player_last_name
-            
-            # Use the better of full name match or last name match, with bonus for exact last name
-            if exact_last_name_match:
-                best_similarity = 1.0  # Perfect match for exact last name
-            else:
-                best_similarity = max(similarity, last_name_similarity)
-            
-            # SMARTER FILTERING: Avoid partial word false positives
-            # If potential name is much longer/shorter than player name, be more strict
-            length_ratio = min(len(potential_name), len(player_name)) / max(len(potential_name), len(player_name))
-            
-            # Check for problematic substring matches (like "invest" matching "vest")
-            is_problematic_substring = False
-            if len(potential_name) > len(player_last_name) and player_last_name in potential_name:
-                # potential_name contains the player's last name as substring (like "invest" contains "vest")
-                is_problematic_substring = True
-            elif len(player_last_name) > len(potential_name) and potential_name in player_last_name:
-                # player's last name contains potential_name as substring
-                is_problematic_substring = True
-            
-            # Adjust threshold based on various factors
-            if exact_last_name_match:
-                threshold = 0.7  # Keep lower threshold for exact last name matches
-            elif is_problematic_substring:
-                threshold = 0.95  # Very strict for substring false positives
-            elif ' ' in player_name and ' ' not in potential_name:
-                # Single word trying to match multi-word name - be stricter unless it's a good last name match
-                threshold = 0.85 if last_name_similarity < 0.9 else 0.7
-            elif length_ratio < 0.6:
-                # Very different lengths - be much stricter
-                threshold = 0.9
-            else:
-                threshold = 0.7
-            
-            # DEBUG: Special logging for Acuña players
-            if "acuna" in player_name:
-                print(f"🔍 ACUNA DEBUG: Similarity={similarity:.3f}, last_name_sim={last_name_similarity:.3f}, best={best_similarity:.3f}, threshold={threshold:.2f}")
-            
-            if best_similarity >= threshold:
-                matches.append((player, best_similarity))
-                if exact_last_name_match:
-                    print(f"🔍 FUZZY MATCH DEBUG: EXACT LAST NAME MATCH - '{potential_name}' = '{player_last_name}' (from {player_name}) = {best_similarity:.3f}")
-                elif last_name_similarity > similarity:
-                    print(f"🔍 FUZZY MATCH DEBUG: GOOD LAST NAME MATCH - '{potential_name}' vs '{player_last_name}' (from {player_name}) = {last_name_similarity:.3f}")
-                else:
-                    print(f"🔍 FUZZY MATCH DEBUG: GOOD MATCH - '{potential_name}' vs '{player_name}' = {similarity:.3f} (threshold: {threshold:.2f})")
-                
-                # DEBUG: Count Acuña matches
-                if "acuna" in player_name:
-                    acuna_players_matched += 1
-                    print(f"🔍 ACUNA DEBUG: ✅ REGULAR MATCH #{acuna_players_matched} - Added {player['name']} with score {best_similarity:.3f}")
-            else:
-                # Only log decent attempts to reduce spam
-                if best_similarity >= 0.75:  # Increased threshold from 0.5 to reduce logging
-                    print(f"🔍 FUZZY MATCH DEBUG: rejected - '{potential_name}' vs '{player_name}' = {best_similarity:.3f} (threshold: {threshold:.2f})")
-                
-                # DEBUG: Special logging for rejected Acuña players
-                if "acuna" in player_name and best_similarity >= 0.5:
-                    print(f"🔍 ACUNA DEBUG: ❌ REJECTED - {player['name']} with score {best_similarity:.3f} (threshold: {threshold:.2f})")
-        
-        # DEBUG: Summary for this potential name
-        if acuna_players_checked > 0:
-            print(f"🔍 ACUNA SUMMARY for '{potential_name}': Checked {acuna_players_checked} Acuña players, matched {acuna_players_matched}")
-            if acuna_players_matched == 0:
-                print(f"🚨 ACUNA PROBLEM: No Acuña players matched for '{potential_name}' - this might be the bug!")
-            elif acuna_players_matched == 1:
-                print(f"⚠️ ACUNA ISSUE: Only 1 Acuña player matched for '{potential_name}' - expected multiple!")
-            else:
-                print(f"✅ ACUNA SUCCESS: {acuna_players_matched} Acuña players matched for '{potential_name}'!")
-    
-    # If no matches found but the text looks like a player name, do a fallback recent mentions check
-    if not matches and is_likely_player_request(text):
-        # Check if any single word in the input might be a player reference
-        normalized_text = normalize_name(text)
-        words = normalized_text.split()
-        potential_player_words = [w for w in words if len(w) >= 4 and w not in {
-            'playing', 'projection', 'stats', 'performance', 'update', 'news', 'info'
-        }]
-        
-        if potential_player_words:
-            print(f"🔍 FUZZY MATCH DEBUG: No strict matches found, but detected potential player words: {potential_player_words}")
-            print(f"🔍 FUZZY MATCH DEBUG: Will trigger fallback recent mentions check")
-    
-    print(f"🔍 FUZZY MATCH DEBUG: Found {len(matches)} total matches before deduplication")
-    
-    # DEBUG: Show all matches before deduplication
-    for i, (player, score) in enumerate(matches):
-        print(f"🔍 FUZZY MATCH DEBUG: Match {i+1}: {player['name']} ({player['team']}) - score: {score:.3f}")
-    
-    if not matches:
-        print("🔍 FUZZY MATCH DEBUG: No matches found above threshold")
-        return []
-    
-    # Sort by score and remove duplicates by player NAME+TEAM (not just name)
-    matches.sort(key=lambda x: x[1], reverse=True)
-    seen_players = set()
-    unique_matches = []
-    
-    for player, score in matches:
-        # Create unique identifier using both name and team (NORMALIZED)
-        player_key = f"{normalize_name(player['name'])}|{normalize_name(player['team'])}"
-        if player_key not in seen_players:
-            unique_matches.append(player)
-            seen_players.add(player_key)
-            print(f"🔍 FUZZY MATCH DEBUG: Added unique player - {player['name']} ({player['team']}) - score: {score:.3f}")
-            if len(unique_matches) >= max_results:
-                break
-        else:
-            print(f"🔍 FUZZY MATCH DEBUG: Skipped exact duplicate - {player['name']} ({player['team']}) - score: {score:.3f}")
-    
-    print(f"🔍 FUZZY MATCH DEBUG: Returning {len(unique_matches)} unique matches")
-    return unique_matches
-
-def contains_banned_word(text):
-    text_lower = text.lower()
-    for category, data in banned_categories.items():
-        for word in data["words"]:
-            word_lower = word.lower()
-            # Use word boundaries to match whole words only
-            if re.search(rf"\b{re.escape(word_lower)}\b", text_lower):
-                print(f"🚫 Found banned word '{word}' in category '{category}'")
-                return category
-    return None
-
-def contains_mention(text):
-    """Check if text contains any @mentions (users, roles, @everyone, @here)"""
-    # Check for user mentions <@123456789>
-    if re.search(r'<@!?\d+>', text):
-        return True
-    # Check for role mentions <@&123456789>
-    if re.search(r'<@&\d+>', text):
-        return True
-    # Check for @everyone and @here
-    if re.search(r'@(everyone|here)', text, re.IGNORECASE):
-        return True
-    # Check for plain @username mentions (even though they won't ping without proper formatting)
-    if re.search(r'@\w+', text):
-        return True
-    return False
-
-def contains_url(text):
-    """Check if text contains any URLs"""
-    # Check for https/http
-    if re.search(r'https?://', text, re.IGNORECASE):
-        return True
-    # Check for common TLDs
-    if re.search(r'\b\w+\.(com|org|net|edu|gov|io|co|me|app|ly|gg|tv|fm|tk|ml|ga|cf)\b', text, re.IGNORECASE):
-        return True
-    # Check for discord links specifically
-    if re.search(r'discord\.(gg|com)', text, re.IGNORECASE):
-        return True
-    # Check for www prefix
-    if re.search(r'\bwww\.\w+', text, re.IGNORECASE):
-        return True
-    return False
-
-def check_player_mentioned(text):
-    """Check if any player from the list is mentioned in the text using IMPROVED fuzzy matching"""
-    print(f"🔍 CHECK PLAYER DEBUG: Looking for players in: '{text}'")
-    print(f"🔍 CHECK PLAYER DEBUG: Normalized input: '{normalize_name(text)}'")
-    
-    if not players_data:
-        print("🔍 CHECK PLAYER DEBUG: No players data available")
-        return None
-    
-    # First, expand any nicknames
-    expanded_text = expand_nicknames(text)
-    if expanded_text != text:
-        print(f"🏷️ NICKNAME: Using expanded text: '{expanded_text}' instead of '{text}'")
-        text = expanded_text  # Use the expanded version for the rest of the search
-    
-    # Apply early filter first
-    if not is_likely_player_request(text):
-        print(f"🚫 EARLY FILTER: '{text}' doesn't look like a player request - ignoring")
-        return None
-    
-    # First, do a simple direct search for debugging - NORMALIZE BOTH SIDES
-    text_normalized = normalize_name(text)
-    direct_matches = []
-    for player in players_data:
-        player_name_normalized = normalize_name(player['name'])
-        
-        # Check for exact match or if the player name is contained in the text
-        # Also check if the text is contained in the player name (for partial searches)
-        if (player_name_normalized in text_normalized or 
-            text_normalized in player_name_normalized or
-            player_name_normalized == text_normalized):
-            direct_matches.append(player)
-            print(f"🔍 CHECK PLAYER DEBUG: DIRECT MATCH found: {player['name']} ({player['team']}) - normalized: '{player_name_normalized}' matches '{text_normalized}'")
-    
-    print(f"🔍 CHECK PLAYER DEBUG: Found {len(direct_matches)} total direct matches")
-    
-    # For direct matches, we want to KEEP players with same name but different teams
-    # Only remove exact duplicates (same name AND same team)
-    if direct_matches:
-        seen_players = set()
-        unique_direct = []
-        for player in direct_matches:
-            # Create unique identifier using both name and team (NORMALIZED)
-            player_key = f"{normalize_name(player['name'])}|{normalize_name(player['team'])}"
-            if player_key not in seen_players:
-                unique_direct.append(player)
-                seen_players.add(player_key)
-                print(f"🔍 CHECK PLAYER DEBUG: Added unique direct match - {player['name']} ({player['team']})")
-            else:
-                print(f"🔍 CHECK PLAYER DEBUG: Skipped exact duplicate - {player['name']} ({player['team']})")
-        
-        print(f"🔍 CHECK PLAYER DEBUG: After deduplication: {len(unique_direct)} unique matches")
-        
-        if unique_direct:
-            print(f"🔍 CHECK PLAYER DEBUG: Returning {len(unique_direct)} direct matches")
-            return unique_direct
-        else:
-            print("🔍 CHECK PLAYER DEBUG: No unique direct matches after deduplication!")
-    
-    print("🔍 CHECK PLAYER DEBUG: No direct matches, trying fuzzy matching...")
-    
-    # If no direct matches, try fuzzy matching
-    matches = fuzzy_match_players(text, max_results=5)
-    
-    if matches:
-        print(f"🔍 CHECK PLAYER DEBUG: Fuzzy matching found {len(matches)} matches")
-        return matches
-    
-    print("🔍 CHECK PLAYER DEBUG: No matches found at all")
-    return None
-
-async def check_recent_player_mentions(guild, players_to_check):
-    """Check if any of the players were mentioned in the last X hours in bot messages only"""
-    import datetime
-    
-    print(f"🕒 RECENT MENTION CHECK: Checking {len(players_to_check)} players")
-    for p in players_to_check:
-        print(f"🕒 RECENT MENTION CHECK: Looking for '{p['name']}' ({p['team']})")
-    
-    time_threshold = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=RECENT_MENTION_HOURS)
-    print(f"🕒 RECENT MENTION CHECK: Time threshold: {time_threshold}")
-    recent_mentions = []
-    
-    # Get both channels
-    final_channel = discord.utils.get(guild.text_channels, name=FINAL_ANSWER_CHANNEL)
-    answering_channel = discord.utils.get(guild.text_channels, name=ANSWERING_CHANNEL)
-    
-    print(f"🕒 RECENT MENTION CHECK: Final channel: {final_channel}")
-    print(f"🕒 RECENT MENTION CHECK: Answering channel: {answering_channel}")
-    
-    for player in players_to_check:
-        player_name_normalized = normalize_name(player['name'])
-        player_uuid = player['uuid'].lower()
-        
-        print(f"🕒 RECENT MENTION CHECK: Checking player '{player['name']}' (normalized: '{player_name_normalized}', uuid: {player_uuid[:8]}...)")
-        
-        # Track where the player was found
-        found_in_answering = False
-        found_in_final = False
-        
-        # Check question reposting channel (answering channel) for BOT messages only
-        if answering_channel:
-            try:
-                message_count = 0
-                async for message in answering_channel.history(after=time_threshold, limit=RECENT_MENTION_LIMIT):
-                    message_count += 1
-                    # Only check messages from the bot itself
-                    if message.author == guild.me:  # guild.me is the bot
-                        message_normalized = normalize_name(message.content)
-                        if (re.search(rf"\b{re.escape(player_name_normalized)}\b", message_normalized) or 
-                            player_uuid in message_normalized):
-                            print(f"🕒 RECENT MENTION CHECK: Found {player['name']} in bot message in answering channel")
-                            print(f"🕒 RECENT MENTION CHECK: Message content snippet: '{message.content[:100]}...'")
-                            found_in_answering = True
-                            break
-                print(f"🕒 RECENT MENTION CHECK: Checked {message_count} messages in answering channel")
-            except Exception as e:
-                print(f"❌ RECENT MENTION CHECK: Error checking answering channel: {e}")
-        
-        # Check final answer channel for BOT messages only
-        if final_channel:
-            try:
-                message_count = 0
-                async for message in final_channel.history(after=time_threshold, limit=RECENT_MENTION_LIMIT):
-                    message_count += 1
-                    # Only check messages from the bot itself
-                    if message.author == guild.me:  # guild.me is the bot
-                        message_normalized = normalize_name(message.content)
-                        if (re.search(rf"\b{re.escape(player_name_normalized)}\b", message_normalized) or 
-                            player_uuid in message_normalized):
-                            print(f"🕒 RECENT MENTION CHECK: Found {player['name']} in bot message in final channel")
-                            print(f"🕒 RECENT MENTION CHECK: Message content snippet: '{message.content[:100]}...'")
-                            found_in_final = True
-                            break
-                print(f"🕒 RECENT MENTION CHECK: Checked {message_count} messages in final channel")
-            except Exception as e:
-                print(f"❌ RECENT MENTION CHECK: Error checking final channel: {e}")
-        
-        # Determine status based on where the player was found
-        status = None
-        if found_in_answering and found_in_final:
-            status = "answered"  # Asked and answered
-            print(f"🕒 RECENT MENTION CHECK: {player['name']} found in both channels - status: answered")
-        elif found_in_answering and not found_in_final:
-            status = "pending"   # Asked but not answered
-            print(f"🕒 RECENT MENTION CHECK: {player['name']} found only in answering channel - status: pending")
-        elif not found_in_answering and found_in_final:
-            status = "answered"  # Edge case: only in final (shouldn't happen normally)
-            print(f"🕒 RECENT MENTION CHECK: {player['name']} found only in final channel - status: answered (edge case)")
-        else:
-            print(f"🕒 RECENT MENTION CHECK: {player['name']} NOT FOUND in either channel")
-        # If not found in either channel, status remains None (no recent mention)
-        
-        # Add to results if found (avoid duplicates by name+team)
-        if status:
-            # Check if we already have this exact player (name + team) - NORMALIZED
-            already_added = False
-            for existing in recent_mentions:
-                if (normalize_name(existing["player"]["name"]) == normalize_name(player["name"]) and 
-                    normalize_name(existing["player"]["team"]) == normalize_name(player["team"])):
-                    already_added = True
-                    print(f"🕒 RECENT MENTION CHECK: Skipping duplicate recent mention for {player['name']} ({player['team']})")
-                    break
-            
-            if not already_added:
-                recent_mentions.append({
-                    "player": player,
-                    "status": status
-                })
-                print(f"🕒 RECENT MENTION CHECK: Added recent mention: {player['name']} ({player['team']}) - {status}")
-    
-    print(f"🕒 RECENT MENTION CHECK: Final result: {len(recent_mentions)} recent mentions found")
-    return recent_mentions
-
-async def process_approved_question(channel, user, question, original_message=None):
-    """Process a question that has passed all checks"""
-    # Delete the original message if provided
-    if original_message:
-        try:
-            await original_message.delete()
-            print("✅ Deleted original user message in process_approved_question")
-        except Exception as e:
-            print(f"❌ Failed to delete original message in process_approved_question: {e}")
-    
-    answering_channel = discord.utils.get(channel.guild.text_channels, name=ANSWERING_CHANNEL)
-    
-    if answering_channel:
-        # Format the question for the answering channel
-        asker_name = f"**{user.display_name}**"
-        formatted_message = f"{asker_name} asked:\n> {question}\n\n❗ **Not Answered**\n\nReply to this message to answer."
-        
-        try:
-            # Post to answering channel
-            posted_message = await answering_channel.send(formatted_message)
-            print(f"✅ Posted question to #{ANSWERING_CHANNEL}")
-            
-            # Store the question mapping for later reference
-            question_map[posted_message.id] = {
-                "question": question,
-                "asker_id": user.id
-            }
-            print(f"✅ Stored question mapping for message ID {posted_message.id}")
-            
-            # Send confirmation message
-            confirmation_msg = await channel.send(f"✅ Your question has been posted for experts to answer.")
-            await confirmation_msg.delete(delay=5)
-            print("✅ Confirmation message sent and will be deleted in 5 seconds")
-            
-        except Exception as e:
-            print(f"❌ Failed to post question to answering channel: {e}")
-            error_msg = await channel.send("❌ Failed to post your question. Please try again.")
-            await error_msg.delete(delay=5)
-    else:
-        print(f"❌ Could not find #{ANSWERING_CHANNEL}")
-        error_msg = await channel.send(f"❌ Could not find #{ANSWERING_CHANNEL}")
-        await error_msg.delete(delay=5)
-
-async def handle_player_mention(message):
-    """Main handler for processing potential player mentions"""
-    question = message.content.strip()
-    
-    if not question:
-        return
-        
-    # Check if this looks like a player request at all
-    if not is_likely_player_request(question):
-        print(f"🚫 EARLY FILTER: '{question}' doesn't look like a player request - ignoring")
-        return
-    
-    # Continue with processing if it looks like a player request
-    print(f"✅ Processing potential player mention: {question}")
 
 # -------- EVENTS --------
 @bot.event
 async def on_ready():
-    try:
-        print("🔥🔥🔥 BOT IS STARTING UP - THIS SHOULD BE VISIBLE 🔥🔥🔥")
-        print(f"✅ Logged in as {bot.user}")
-        
-        # Print timing configuration
-        print(f"⚙️ Timing Config:")
-        print(f"  - Recent mention window: {RECENT_MENTION_HOURS} hours")
-        print(f"  - Message search limit: {RECENT_MENTION_LIMIT} per channel") 
-        print(f"  - Selection timeout: {SELECTION_TIMEOUT} seconds")
-        
-        banned_categories["profanity"]["words"] = load_words_from_json("profanity.json")
-        print(f"✅ Profanity list loaded: {len(banned_categories['profanity']['words'])} words")
-        print(f"🔍 First few words: {banned_categories['profanity']['words'][:5]}")
-        
-        # Load player data
-        global players_data
-        players_data = load_players_from_json("players.json")
-        log_info(f"STARTUP: Player list loaded: {len(players_data)} players")
-        
-        if players_data:
-            log_debug(f"STARTUP: Sample players: {[p['name'] for p in players_data[:3]]}")
-            
-            # Test normalize_name function first
-            test_name = "Ronald Acuña Jr."
-            normalized_test = normalize_name(test_name)
-            log_debug(f"STARTUP: Normalize test: '{test_name}' → '{normalized_test}'")
-            
-            # Test search for Acuña players - FIXED to use normalize_name
-            acuna_players = []
-            for p in players_data:
-                normalized_name = normalize_name(p['name'])
-                if "acuna" in normalized_name:
-                    acuna_players.append(p)
-            
-            log_info(f"STARTUP: Found {len(acuna_players)} Acuña players")
-            if acuna_players:
-                details = "\n".join([f"  - {ap['name']} ({ap['team']}) - {ap.get('rarity', 'N/A')}" for ap in acuna_players])
-                log_info(f"STARTUP: Acuña players found:", details)
-            else:
-                log_error("STARTUP: NO ACUÑA PLAYERS FOUND - This might explain disambiguation issues!")
-                
-                # Additional debugging if no Acuña found
-                log_error(f"STARTUP: Debug - looking for names containing 'ronald'...")
-                ronald_players = [p for p in players_data if "ronald" in normalize_name(p['name'])]
-                if ronald_players:
-                    log_error(f"STARTUP: Found {len(ronald_players)} Ronald players:")
-                    for rp in ronald_players[:3]:
-                        original_name = rp['name']
-                        normalized = normalize_name(original_name)
-                        log_error(f"  - Original: '{original_name}' → Normalized: '{normalized}'")
-                else:
-                    log_error("STARTUP: No Ronald players found either!")
-                    
-        else:
-            log_error("STARTUP: NO PLAYERS DATA LOADED AT ALL!")
-            
-        # Load nicknames
-        load_success = load_nicknames_from_json("nicknames.json")
-        if load_success:
-            log_info("STARTUP: Nicknames loaded successfully")
-        else:
-            log_error("STARTUP: Failed to load nicknames")
-        
-        print(f"✅ Bot is ready and listening for messages")
-        
-    except Exception as e:
-        print(f"❌ ERROR IN ON_READY: {e}")
-        log_error(f"STARTUP ERROR: {e}")
-        raise e
+    print(f"✅ Logged in as {bot.user}")
+    
+    await log_analytics("Bot Health", event="startup", bot_name=str(bot.user), 
+                        total_questions=0, blocked_questions=0, error_count=0)
+    
+    # Load data
+    banned_categories["profanity"]["words"] = load_words_from_json("profanity.json")
+    players_loaded = load_players_from_json("players.json")
+    log_info(f"STARTUP: Player list loaded: {len(players_loaded)} players")
+    
+    load_nicknames_from_json("nicknames.json")
+    log_success("Bot is ready and listening for messages!")
 
 @bot.event  
 async def on_message(message):
-    # Ignore messages from the bot itself
     if message.author.bot:
         return
     
-    # Only process messages in specific channels we care about
     relevant_channels = [SUBMISSION_CHANNEL, ANSWERING_CHANNEL, FINAL_ANSWER_CHANNEL]
-    
     if message.channel.name not in relevant_channels:
-        # Ignore messages in channels we don't care about
         return
-    
-    print(f"📨 Message received in #{message.channel.name}: {message.content[:50]}...")
 
-    # Handle submission channel - block non-commands only
+    # Handle submission channel
     if message.channel.name == SUBMISSION_CHANNEL:
-        # For !ask commands, do NOTHING here - let Discord.py process them naturally
         if message.content.startswith("!ask"):
-            print("📝 !ask command detected - will be processed by Discord.py naturally")
-            # DO NOT call bot.process_commands here - it will be called at the end
+            pass  # Let Discord.py process the command
         else:
-            # Block everything else: regular text, emojis, server emotes, attachments, etc.
-            print(f"🚫 Blocking non-command message in {SUBMISSION_CHANNEL}: '{message.content}'")
-            print(f"📎 Attachments: {len(message.attachments)}")
-            
-            # Delete the original message first
             try:
                 await message.delete()
-                print("✅ Original message deleted")
-            except Exception as e:
-                print(f"❌ Failed to delete message: {e}")
-            
-            error_msg = await message.channel.send(
-                f"Only the `!ask` command is allowed in #{SUBMISSION_CHANNEL}."
-            )
+            except:
+                pass
+            error_msg = await message.channel.send(f"Only the `!ask` command is allowed in #{SUBMISSION_CHANNEL}.")
             await error_msg.delete(delay=5)
-            # Don't process commands for blocked messages
             return
 
-    # Handle expert answers (only in answering channel)
+    # Handle expert answers
     elif message.channel.name == ANSWERING_CHANNEL and message.reference:
-        print(f"🔍 Checking for referenced message in {ANSWERING_CHANNEL}")
         referenced = message.reference.resolved
         if referenced and referenced.id in question_map:
-            print(f"✅ Found matching question, moving to final channel")
             meta = question_map.pop(referenced.id)
             final_channel = discord.utils.get(message.guild.text_channels, name=FINAL_ANSWER_CHANNEL)
 
             if final_channel:
                 asker_mention = f"<@{meta['asker_id']}>"
                 expert_name = message.author.display_name
-                # Use dashes for clear visual separation
                 formatted_answer = f"-----\n**Question:**\n{asker_mention} asked: {meta['question']}\n\n**{expert_name}** replied:\n{message.content}\n-----"
                 await final_channel.send(formatted_answer)
+                
                 try:
-                    # Fetch the message fresh from Discord to get current content
                     fresh_message = await message.channel.fetch_message(referenced.id)
                     original_content = fresh_message.content
-                    print(f"🔍 Original content: {repr(original_content)}")
                     
-                    # Replace the red exclamation and "Not Answered" with green check and "Answered"
-                    # Also remove the "Reply to this message to answer" line
                     if "❗ **Not Answered**\n\nReply to this message to answer." in original_content:
                         updated_content = original_content.replace("❗ **Not Answered**\n\nReply to this message to answer.", "✅ **Answered**")
-                        print("🔧 Replaced full section with reply instruction")
-                    elif "❗ **Not Answered**\n" in original_content:
-                        updated_content = original_content.replace("❗ **Not Answered**\n", "✅ **Answered**\n")
-                        # Also remove the reply instruction if it exists separately
-                        updated_content = updated_content.replace("\nReply to this message to answer.", "")
-                        updated_content = updated_content.replace("Reply to this message to answer.", "")
-                        print("🔧 Replaced with newline version and removed reply instruction")
                     elif "❗ **Not Answered**" in original_content:
                         updated_content = original_content.replace("❗ **Not Answered**", "✅ **Answered**")
-                        # Also remove the reply instruction if it exists separately
-                        updated_content = updated_content.replace("\nReply to this message to answer.", "")
-                        updated_content = updated_content.replace("Reply to this message to answer.", "")
-                        print("🔧 Replaced without newline version and removed reply instruction")
+                        updated_content = updated_content.replace("\nReply to this message to answer.", "").replace("Reply to this message to answer.", "")
                     else:
-                        # Fallback: append the answered status
                         updated_content = original_content + "\n\n✅ **Answered**\n"
-                        print("🔧 Used fallback append method")
                     
-                    print(f"🔍 Updated content: {repr(updated_content)}")
-                    
-                    # Check if content actually changed
                     if updated_content != original_content:
                         await fresh_message.edit(content=updated_content)
-                        print("✅ Updated original message with answered status")
-                    else:
-                        print("⚠️ No changes detected in content")
-                        
                 except Exception as e:
-                    print(f"❌ Failed to edit original message: {e}")
-                    print(f"❌ Error details: {type(e).__name__}: {str(e)}")
-            else:
-                print(f"❌ Could not find #{FINAL_ANSWER_CHANNEL}")
-        else:
-            print("❌ No matching question found in question_map")
+                    log_error(f"Failed to edit original message: {e}")
     
-    # Process commands ONCE at the end for ALL messages
     await bot.process_commands(message)
 
-# -------- PREFIX COMMAND: !ask --------
+# -------- COMMAND: !ask --------
 @bot.command(name="ask")
 async def ask_question(ctx, *, question: str = None):
-    print(f"🚨 COMMAND HANDLER STARTED - !ask command in #{ctx.channel.name}")
-    print(f"🔍 Question: {question}")
-    print(f"🔍 Bot permissions in channel: {ctx.channel.permissions_for(ctx.guild.me)}")
-    print(f"🔍 Can manage messages: {ctx.channel.permissions_for(ctx.guild.me).manage_messages}")
-    
     if ctx.channel.name != SUBMISSION_CHANNEL:
-        print(f"❌ Wrong channel: {ctx.channel.name} != {SUBMISSION_CHANNEL}")
         error_msg = await ctx.send(f"Please use this command in #{SUBMISSION_CHANNEL}")
         await error_msg.delete(delay=5)
         return
 
     if question is None:
-        print("❌ No question provided")
         error_msg = await ctx.send("Please provide a question. Usage: `!ask your question here`")
         await error_msg.delete(delay=5)
         return
 
-    print(f"🔍 Checking question length: {len(question)} characters")
-    
-    # Check character limit (increased to 300)
-    if len(question) > 300:
-        print(f"🚫 Question too long: {len(question)} characters")
-        
-        # Delete the user's message first
+    # Validate question through all checks
+    is_valid, error_message, error_category = validate_question(question)
+    if not is_valid:
         try:
             await ctx.message.delete()
-            print("✅ Deleted user's long message")
-        except Exception as e:
-            print(f"❌ Failed to delete user's message: {e}")
-        
-        error_msg = await ctx.send(f"Your question is too long ({len(question)} characters). Please keep questions under 300 characters.")
+        except:
+            pass
+        error_msg = await ctx.send(error_message)
         await error_msg.delete(delay=5)
         return
 
-    print(f"🔍 Checking for banned words in: {question}")
-    
-    # Check for server emotes in the question (custom server emotes only)
-    if re.search(r'<a?:\w+:\d+>', question):
-        print("🚫 Server emote detected in question")
-        # Delete the user's message first
-        try:
-            await ctx.message.delete()
-            print("✅ Deleted user's message with server emote")
-        except Exception as e:
-            print(f"❌ Failed to delete user's message: {e}")
-        
-        error_msg = await ctx.send("Server emotes are not allowed in questions. Please ask a text-based question.")
-        await error_msg.delete(delay=5)
-        return
-    
-    # Check for mentions in the question
-    if contains_mention(question):
-        print("🚫 @mention detected in question")
-        # Delete the user's message first
-        try:
-            await ctx.message.delete()
-            print("✅ Deleted user's message with @mention")
-        except Exception as e:
-            print(f"❌ Failed to delete user's message: {e}")
-        
-        error_msg = await ctx.send("@mentions are not allowed in questions. Please ask your question without mentioning anyone.")
-        await error_msg.delete(delay=5)
-        return
-    
-    # Check for URLs in the question
-    if contains_url(question):
-        print("🚫 URL detected in question")
-        # Delete the user's message first
-        try:
-            await ctx.message.delete()
-            print("✅ Deleted user's message with URL")
-        except Exception as e:
-            print(f"❌ Failed to delete user's message: {e}")
-        
-        error_msg = await ctx.send("URLs are not allowed in questions. Please ask your question without including any links.")
-        await error_msg.delete(delay=5)
-        return
-    
-    banned_category = contains_banned_word(question)
-    if banned_category:
-        print(f"🚫 Banned word found: {banned_category}")
-        # Delete the user's message first
-        try:
-            await ctx.message.delete()
-            print("✅ Deleted user's message with banned word")
-        except Exception as e:
-            print(f"❌ Failed to delete user's message: {e}")
-        
-        response = banned_categories[banned_category]["response"]
-        error_msg = await ctx.send(response)
-        await error_msg.delete(delay=5)
-        return
-
-    # Check for player names and fuzzy matching
-    print(f"🔍 STARTING FUZZY MATCHING for: {question}")
-    print(f"🔍 Total players in database: {len(players_data)}")
-    if players_data:
-        print(f"🔍 Sample player names: {[p.get('name', 'NO_NAME') for p in players_data[:3]]}")
-    else:
-        print("❌ NO PLAYERS DATA LOADED!")
+    # Check for player names
+    if not players_data:
         error_msg = await ctx.send("Player database is not available. Please try again later.")
         await error_msg.delete(delay=5)
         try:
@@ -1251,81 +130,49 @@ async def ask_question(ctx, *, question: str = None):
         return
     
     matched_players = check_player_mentioned(question)
-    print(f"🔍 Fuzzy matching returned: {matched_players}")
     
-    # If no player matched but question looks like a player request, do fallback recent mentions check
+    # Fallback check for potential player words
     fallback_recent_check = False
     if not matched_players and is_likely_player_request(question):
-        normalized_text = normalize_name(question)
-        words = normalized_text.split()
-        potential_player_words = [w for w in words if len(w) >= 4 and w not in {
-            'playing', 'projection', 'stats', 'performance', 'update', 'news', 'info', 'question', 'about'
-        }]
-        
+        potential_player_words = get_potential_player_words(question)
         if potential_player_words:
-            print(f"🔍 FALLBACK: No player matched, but found potential player words: {potential_player_words}")
-            print(f"🔍 FALLBACK: Will check recent mentions for these terms")
             fallback_recent_check = True
-    
+
     if matched_players:
-        print(f"🎯 Found {len(matched_players)} potential player matches")
-        for player in matched_players:
-            print(f"🎯 Matched player: {player.get('name', 'NO_NAME')} - {player.get('team', 'NO_TEAM')}")
-        
-        # Check if we have multiple players (need disambiguation)
+        # Multiple players - need disambiguation
         if len(matched_players) > 1:
-            log_info(f"DISAMBIGUATION: Multiple players found ({len(matched_players)}) for '{question}'")
-            
-            # Check if user already has a pending selection to avoid duplicates
-            log_debug(f"DUPLICATE CHECK: User ID {ctx.author.id}, current pending selections: {list(pending_selections.keys())}")
             if ctx.author.id in pending_selections:
-                existing = pending_selections[ctx.author.id]
-                log_warning(f"DUPLICATE DETECTED: User {ctx.author.id} already has pending selection", 
-                          f"Question: {existing.get('question', 'unknown')}\nExpires: {existing.get('expires_at', 'unknown')}")
                 return
-            else:
-                log_debug(f"DUPLICATE CHECK PASSED: User {ctx.author.id} has no pending selection")
             
             selection_text = "Multiple players found. Which did you mean:\n"
-            reactions = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣"]
             
             for i, player in enumerate(matched_players):
-                if i < len(reactions):
-                    selection_text += f"{reactions[i]} {player['name']} - {player['team']}\n"
-                    print(f"🤔 Disambiguation option {i+1}: {player['name']} - {player['team']}")
+                if i < len(REACTIONS):
+                    selection_text += f"{REACTIONS[i]} {player['name']} - {player['team']}\n"
             
-            # Add a small delay before showing the selection
             await asyncio.sleep(PRE_SELECTION_DELAY)
             
-            print(f"🤔 About to post disambiguation selection...")
-            
-            # Post selection message
             try:
                 selection_msg = await ctx.send(selection_text)
-                print(f"🤔 Posted disambiguation selection with ID: {selection_msg.id}")
             except Exception as e:
-                print(f"❌ Failed to post disambiguation message: {e}")
+                log_error(f"Failed to post disambiguation message: {e}")
                 error_msg = await ctx.send("❌ Error creating player selection. Please try again.")
                 await error_msg.delete(delay=5)
                 return
             
-            # Add reactions with delay to avoid rate limiting
+            # Add reactions
             reactions_added = 0
-            for i in range(min(len(matched_players), len(reactions))):
+            for i in range(min(len(matched_players), len(REACTIONS))):
                 try:
-                    await selection_msg.add_reaction(reactions[i])
-                    print(f"🤔 Added reaction {reactions[i]}")
+                    await selection_msg.add_reaction(REACTIONS[i])
                     reactions_added += 1
-                    # Small delay between reactions to avoid rate limiting
-                    if i < len(matched_players) - 1:  # Don't delay after the last reaction
+                    if i < len(matched_players) - 1:
                         await asyncio.sleep(0.2)
                 except Exception as e:
-                    print(f"❌ Failed to add reaction {reactions[i]}: {e}")
-                    break  # Stop adding reactions if we hit an error
+                    log_error(f"Failed to add reaction {REACTIONS[i]}: {e}")
+                    break
             
-            # If we couldn't add any reactions, clean up and try to delete the message
             if reactions_added == 0:
-                print("❌ Could not add any reactions, cleaning up")
                 try:
                     await selection_msg.delete()
                     await ctx.message.delete()
@@ -1335,7 +182,7 @@ async def ask_question(ctx, *, question: str = None):
                 await error_msg.delete(delay=5)
                 return
             
-            # Store the pending selection with more details
+            # Store pending selection
             pending_selections[ctx.author.id] = {
                 'players': matched_players,
                 'question': question,
@@ -1346,100 +193,70 @@ async def ask_question(ctx, *, question: str = None):
                 "original_question": question,
                 "locked": False,
                 "original_user_message": ctx.message,
-                "type": "disambiguation_selection"  # This is for picking which player they meant
+                "type": "disambiguation_selection"
             }
             
-            print(f"✅ Posted disambiguation selection with {len(matched_players)} options")
-            print(f"✅ Stored pending disambiguation for user {ctx.author.id}")
-            
-            # Set up timeout
-            asyncio.create_task(handle_selection_timeout(ctx.author.id, ctx))
-            
-            print("🚨 COMMAND HANDLER FINISHED - SHOWING DISAMBIGUATION")
+            start_selection_timeout(ctx.author.id, ctx)
             return
         
-        # Single player found - check recent mentions
+        # Single player - check recent mentions
         recent_mentions = await check_recent_player_mentions(ctx.guild, matched_players)
         
         if recent_mentions:
-            print(f"🕒 Found {len(recent_mentions)} players with recent mentions")
-            
-            # If only one player with recent mentions - direct block
             if len(recent_mentions) == 1:
                 mention = recent_mentions[0]
                 player = mention["player"]
                 status = mention["status"]
                 
-                print(f"🚫 Single player {player['name']} found with status: {status}")
-                
-                # Delete the user's message first
                 try:
                     await ctx.message.delete()
-                    print("✅ Deleted user's message - player recently mentioned")
-                except Exception as e:
-                    print(f"❌ Failed to delete user's message: {e}")
+                except:
+                    pass
                 
                 if status == "answered":
                     error_msg = await ctx.send(f"This player has been asked about recently. There is an answer here: {FINAL_ANSWER_LINK}")
-                else:  # pending
+                else:
                     error_msg = await ctx.send("This player has been asked about recently, please be patient and wait for an answer.")
                 
                 await error_msg.delete(delay=8)
-                print("🚨 COMMAND HANDLER FINISHED - BLOCKED REPEAT")
                 return
             
-            # Multiple players with recent mentions - show selection dialog
+            # Multiple players with recent mentions
             else:
-                print(f"🤔 Multiple players with recent mentions, showing selection")
-                print(f"🤔 Creating selection for {len(recent_mentions)} unique players")
-                
-                # Check if user already has a pending selection to avoid duplicates
                 if ctx.author.id in pending_selections:
-                    print(f"⚠️ User {ctx.author.id} already has a pending selection, skipping duplicate")
                     return
                 
                 selection_text = "Multiple players have been asked about recently. Which did you mean:\n"
-                reactions = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣"]
                 
                 for i, mention in enumerate(recent_mentions):
                     player = mention["player"]
                     status = mention["status"]
                     status_text = "recently answered" if status == "answered" else "pending answer"
-                    selection_text += f"{reactions[i]} {player['name']} - {player['team']} ({status_text})\n"
-                    print(f"🤔 Selection option {i+1}: {player['name']} - {player['team']} ({status_text})")
+                    selection_text += f"{REACTIONS[i]} {player['name']} - {player['team']} ({status_text})\n"
                 
-                # Add a small delay before showing the selection to ensure message is posted
                 await asyncio.sleep(PRE_SELECTION_DELAY)
                 
-                print(f"🤔 About to post selection message...")
-                
-                # Post selection message
                 try:
                     selection_msg = await ctx.send(selection_text)
-                    print(f"🤔 Posted selection message with ID: {selection_msg.id}")
                 except Exception as e:
-                    print(f"❌ Failed to post blocking selection message: {e}")
+                    log_error(f"Failed to post blocking selection: {e}")
                     error_msg = await ctx.send("❌ Error creating player selection. Please try again.")
                     await error_msg.delete(delay=5)
                     return
                 
-                # Add reactions with delay to avoid rate limiting
+                # Add reactions
                 reactions_added = 0
                 for i in range(len(recent_mentions)):
                     try:
-                        await selection_msg.add_reaction(reactions[i])
-                        print(f"🤔 Added reaction {reactions[i]}")
+                        await selection_msg.add_reaction(REACTIONS[i])
                         reactions_added += 1
-                        # Small delay between reactions to avoid rate limiting
-                        if i < len(recent_mentions) - 1:  # Don't delay after the last reaction
+                        if i < len(recent_mentions) - 1:
                             await asyncio.sleep(0.2)
                     except Exception as e:
-                        print(f"❌ Failed to add reaction {reactions[i]}: {e}")
-                        break  # Stop adding reactions if we hit an error
+                        log_error(f"Failed to add reaction: {e}")
+                        break
                 
-                # If we couldn't add any reactions, clean up and try to delete the message
                 if reactions_added == 0:
-                    print("❌ Could not add any reactions, cleaning up")
                     try:
                         await selection_msg.delete()
                         await ctx.message.delete()
@@ -1449,7 +266,7 @@ async def ask_question(ctx, *, question: str = None):
                     await error_msg.delete(delay=5)
                     return
                 
-                # Only store pending selection if we successfully added reactions (but for blocking purposes)
+                # Store blocking selection
                 pending_selections[ctx.author.id] = {
                     "message": selection_msg,
                     "players": [m["player"] for m in recent_mentions],
@@ -1457,213 +274,83 @@ async def ask_question(ctx, *, question: str = None):
                     "original_question": question,
                     "locked": False,
                     "original_user_message": ctx.message,
-                    "type": "block_selection"  # This is for blocking, not approval
+                    "type": "block_selection"
                 }
                 
-                print(f"✅ Posted blocking selection message with {len(recent_mentions)} options")
-                print(f"✅ Stored pending selection for user {ctx.author.id}")
-                
-                # Set up timeout
-                asyncio.create_task(handle_selection_timeout(ctx.author.id, ctx))
-                
-                print("🚨 COMMAND HANDLER FINISHED - SHOWING SELECTION")
+                start_selection_timeout(ctx.author.id, ctx)
                 return
         
-        # No recent mentions found - continue with normal processing
-        print("✅ No recent mentions found, continuing with normal question processing")
     elif fallback_recent_check:
-        # Fallback: check recent mentions using the potential player words
-        print(f"🔍 FALLBACK: Checking recent mentions for potential player terms")
-        
-        # Search recent bot messages for any of the potential player words
-        answering_channel = discord.utils.get(ctx.guild.text_channels, name=ANSWERING_CHANNEL)
-        final_channel = discord.utils.get(ctx.guild.text_channels, name=FINAL_ANSWER_CHANNEL)
-        
-        import datetime
-        time_threshold = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=RECENT_MENTION_HOURS)
-        
-        found_recent_mention = False
-        
-        for word in potential_player_words:
-            if found_recent_mention:
-                break
-                
-            # Check answering channel
-            if answering_channel:
-                try:
-                    async for message in answering_channel.history(after=time_threshold, limit=RECENT_MENTION_LIMIT):
-                        if message.author == ctx.guild.me:
-                            message_normalized = normalize_name(message.content)
-                            if word in message_normalized:
-                                print(f"🕒 FALLBACK: Found '{word}' in recent bot message in answering channel")
-                                found_recent_mention = True
-                                break
-                except Exception as e:
-                    print(f"❌ FALLBACK: Error checking answering channel: {e}")
-            
-            # Check final channel
-            if final_channel and not found_recent_mention:
-                try:
-                    async for message in final_channel.history(after=time_threshold, limit=RECENT_MENTION_LIMIT):
-                        if message.author == ctx.guild.me:
-                            message_normalized = normalize_name(message.content)
-                            if word in message_normalized:
-                                print(f"🕒 FALLBACK: Found '{word}' in recent bot message in final channel")
-                                found_recent_mention = True
-                                break
-                except Exception as e:
-                    print(f"❌ FALLBACK: Error checking final channel: {e}")
+        # Fallback recent mentions check
+        potential_player_words = get_potential_player_words(question)
+        found_recent_mention = await check_fallback_recent_mentions(ctx.guild, potential_player_words)
         
         if found_recent_mention:
-            print(f"🚫 FALLBACK: Found recent mention of player terms - blocking question")
-            
-            # Delete the user's message first
             try:
                 await ctx.message.delete()
-                print("✅ Deleted user's message - recent mention found via fallback")
-            except Exception as e:
-                print(f"❌ Failed to delete user's message: {e}")
-            
+            except:
+                pass
             error_msg = await ctx.send("This topic has been asked about recently, please be patient and wait for an answer.")
             await error_msg.delete(delay=8)
-            print("🚨 COMMAND HANDLER FINISHED - BLOCKED VIA FALLBACK")
             return
-        else:
-            print("✅ FALLBACK: No recent mentions found, continuing with normal question processing")
-    else:
-        print("🔍 No player matches found")
 
-    # All checks passed - post question to answering channel
-    print("✅ All checks passed, posting to answering channel")
-    
-    # Use the centralized function with original message for deletion
+    # All checks passed - post question
     await process_approved_question(ctx.channel, ctx.author, question, ctx.message)
-        
-    print("🚨 COMMAND HANDLER FINISHED - NORMAL PROCESSING")
 
-# -------- REACTION HANDLER FOR PLAYER SELECTION --------
+# -------- REACTION HANDLER --------
 @bot.event
 async def on_reaction_add(reaction, user):
-    if user.bot:
-        return
-    
-    # Check if this is a pending selection
-    if user.id not in pending_selections:
+    if user.bot or user.id not in pending_selections:
         return
     
     selection_data = pending_selections[user.id]
     
-    # Check if reaction is on the correct message
-    if reaction.message.id != selection_data["message"].id:
-        return
-    
-    # Check if already locked
-    if selection_data["locked"]:
+    if reaction.message.id != selection_data["message"].id or selection_data["locked"]:
         return
     
     # Lock the selection
     selection_data["locked"] = True
     
-    # Valid reactions
-    reactions = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣"]
+    # Cancel timeout task
+    cancel_selection_timeout(user.id)
     
-    if str(reaction.emoji) in reactions:
-        selected_index = reactions.index(str(reaction.emoji))
+    if str(reaction.emoji) in REACTIONS:
+        selected_index = REACTIONS.index(str(reaction.emoji))
         
-        # Check if index is valid
         if selected_index < len(selection_data["players"]):
             selected_player = selection_data["players"][selected_index]
-            print(f"🎯 User selected: {selected_player['name']}")
             
-            # Clean up messages first
+            # Log analytics for user selection
+            await log_analytics("User Selection",
+                user_id=user.id,
+                user_name=getattr(user, 'display_name', 'Unknown'),
+                channel=reaction.message.channel.name,
+                question=selection_data.get("original_question", "Unknown"),
+                selected_player=f"{selected_player['name']} ({selected_player['team']})",
+                selection_type=selection_data.get("type", "unknown"),
+                timeout="completed"
+            )
+            
+            # Clean up messages
             try:
                 await selection_data["message"].delete()
-                print("✅ Deleted selection message")
-            except Exception as e:
-                print(f"❌ Failed to delete selection message: {e}")
+            except:
+                pass
             
-            # Note: original_user_message will be deleted in process_approved_question
-            
-            # Remove from pending selections
+            # Remove from pending
             del pending_selections[user.id]
             
             # Handle different selection types
             if selection_data.get("type") == "block_selection":
-                # This is a blocking selection - show appropriate block message
-                # Find the selected player's status
-                selected_mention = None
-                for mention in selection_data["mentions"]:
-                    if mention["player"]["uuid"] == selected_player["uuid"]:
-                        selected_mention = mention
-                        break
-                
-                if selected_mention:
-                    status = selected_mention["status"]
-                    if status == "answered":
-                        error_msg = await reaction.message.channel.send(
-                            f"This player has been asked about recently. There is an answer here: {FINAL_ANSWER_LINK}"
-                        )
-                    else:  # pending
-                        error_msg = await reaction.message.channel.send(
-                            "This player has been asked about recently, please be patient and wait for an answer."
-                        )
-                    
-                    await error_msg.delete(delay=8)
-                    # Delete the original user message as well
-                    try:
-                        await selection_data["original_user_message"].delete()
-                        print("✅ Deleted original user message after blocking")
-                    except Exception as e:
-                        print(f"❌ Failed to delete original user message: {e}")
-                    return
+                await handle_block_selection(reaction, user, selected_player, selection_data)
+                return
             
             elif selection_data.get("type") == "disambiguation_selection":
-                # This is a disambiguation selection - now check recent mentions for the selected player
-                print(f"🎯 User disambiguated to: {selected_player['name']} ({selected_player['team']})")
-                
-                # Check recent mentions for this specific player
-                recent_mentions = await check_recent_player_mentions(reaction.message.guild, [selected_player])
-                
-                if recent_mentions:
-                    mention = recent_mentions[0]
-                    status = mention["status"]
-                    
-                    print(f"🚫 Selected player {selected_player['name']} has recent mention with status: {status}")
-                    
-                    if status == "answered":
-                        error_msg = await reaction.message.channel.send(
-                            f"This player has been asked about recently. There is an answer here: {FINAL_ANSWER_LINK}"
-                        )
-                    else:  # pending
-                        error_msg = await reaction.message.channel.send(
-                            "This player has been asked about recently, please be patient and wait for an answer."
-                        )
-                    
-                    await error_msg.delete(delay=8)
-                    # Delete the original user message as well
-                    try:
-                        await selection_data["original_user_message"].delete()
-                        print("✅ Deleted original user message after blocking disambiguation")
-                    except Exception as e:
-                        print(f"❌ Failed to delete original user message: {e}")
-                    return
-                else:
-                    # No recent mentions - proceed with the question, adding selected player info
-                    print(f"✅ Selected player {selected_player['name']} has no recent mentions - proceeding with question")
-                    
-                    # Append selected player info to make it clear which player they meant
-                    modified_question = f"{selection_data['original_question']} ({selected_player['name']} - {selected_player['team']})"
-                    print(f"🔧 Modified question: {modified_question}")
-                    
-                    await process_approved_question(
-                        reaction.message.channel,
-                        user,
-                        modified_question,
-                        selection_data["original_user_message"]
-                    )
-                    return
+                blocked = await handle_disambiguation_selection(reaction, user, selected_player, selection_data)
+                if not blocked:
+                    return  # Question was processed
             
-            # Fallback to normal processing (shouldn't happen with current logic)
+            # Fallback - shouldn't happen with current logic
             await process_approved_question(
                 reaction.message.channel, 
                 user, 
@@ -1671,14 +358,10 @@ async def on_reaction_add(reaction, user):
                 selection_data.get("original_user_message")
             )
     
-    # Invalid reaction - clean up and remove from pending
+    # Invalid reaction - clean up
     else:
-        try:
-            await selection_data["message"].delete()
-            await selection_data["original_user_message"].delete()
-        except:
-            pass
-        del pending_selections[user.id]
+        cleanup_invalid_selection(user.id, selection_data)
 
 # -------- RUN --------
-bot.run(os.getenv('DISCORD_TOKEN'))
+if __name__ == "__main__":
+    bot.run(DISCORD_TOKEN)
