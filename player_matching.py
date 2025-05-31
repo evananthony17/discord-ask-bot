@@ -139,7 +139,7 @@ def fuzzy_match_players(text, max_results=8):
     from logging_system import log_info
     
     print(f"🔍 FUZZY MATCH: Starting for '{text}'")
-    asyncio.create_task(log_info(f"FUZZY MATCH Starting", f"Query: '{text}'"))
+    log_info(f"FUZZY MATCH Starting", f"Query: '{text}'")
     
     if not players_data:
         print("🔍 FUZZY MATCH: No players data available")
@@ -150,12 +150,12 @@ def fuzzy_match_players(text, max_results=8):
     matches = []
     
     print(f"🔍 FUZZY MATCH: Testing {len(potential_names)} potential names: {potential_names}")
-    asyncio.create_task(log_info(f"FUZZY MATCH Potential Names", f"Found {len(potential_names)} names: {potential_names}"))
+    log_info(f"FUZZY MATCH Potential Names", f"Found {len(potential_names)} names: {potential_names}")
     
     # Try fuzzy matching with each potential name
     for potential_name in potential_names:
         print(f"🔍 FUZZY MATCH: Testing potential name: '{potential_name}'")
-        asyncio.create_task(log_info(f"FUZZY MATCH Testing", f"Name: '{potential_name}'"))
+        log_info(f"FUZZY MATCH Testing", f"Name: '{potential_name}'")
         
         for i, player in enumerate(players_data):
             player_name = normalize_name(player['name'])
@@ -192,16 +192,16 @@ def fuzzy_match_players(text, max_results=8):
             
             if best_similarity >= threshold:
                 print(f"✅ FUZZY MATCH: '{potential_name}' → {player['name']} ({player['team']}) = {best_similarity:.3f} (threshold: {threshold})")
-                asyncio.create_task(log_info(f"FUZZY MATCH Found", f"'{potential_name}' → {player['name']} ({player['team']}) = {best_similarity:.3f}"))
+                log_info(f"FUZZY MATCH Found", f"'{potential_name}' → {player['name']} ({player['team']}) = {best_similarity:.3f}")
                 matches.append((player, best_similarity))
             elif best_similarity >= 0.5:  # Log near misses for debugging
                 print(f"❌ NEAR MISS: '{potential_name}' → {player['name']} ({player['team']}) = {best_similarity:.3f} (needed: {threshold})")
                 # Only log Acuña near misses to avoid spam
                 if 'acuna' in normalize_name(player['name']).lower():
-                    asyncio.create_task(log_info(f"ACUÑA NEAR MISS", f"'{potential_name}' → {player['name']} ({player['team']}) = {best_similarity:.3f} (needed: {threshold})"))
+                    log_info(f"ACUÑA NEAR MISS", f"'{potential_name}' → {player['name']} ({player['team']}) = {best_similarity:.3f} (needed: {threshold})")
     
     print(f"🔍 FUZZY MATCH: Found {len(matches)} total matches before deduplication")
-    asyncio.create_task(log_info(f"FUZZY MATCH Total", f"Found {len(matches)} matches before deduplication"))
+    log_info(f"FUZZY MATCH Total", f"Found {len(matches)} matches before deduplication")
     
     # Sort by score and remove duplicates
     matches.sort(key=lambda x: x[1], reverse=True)
@@ -212,7 +212,7 @@ def fuzzy_match_players(text, max_results=8):
         player_key = f"{normalize_name(player['name'])}|{normalize_name(player['team'])}"
         if player_key not in seen_players and len(unique_matches) < max_results:
             print(f"✅ ADDING MATCH: {player['name']} ({player['team']}) = {score:.3f}")
-            asyncio.create_task(log_info(f"FUZZY MATCH Adding", f"{player['name']} ({player['team']}) = {score:.3f}"))
+            log_info(f"FUZZY MATCH Adding", f"{player['name']} ({player['team']}) = {score:.3f}")
             unique_matches.append(player)
             seen_players.add(player_key)
         else:
@@ -222,7 +222,7 @@ def fuzzy_match_players(text, max_results=8):
                 print(f"📊 MAX RESULTS REACHED: Skipping {player['name']} ({player['team']})")
     
     print(f"🔍 FUZZY MATCH: Returning {len(unique_matches)} unique matches")
-    asyncio.create_task(log_info(f"FUZZY MATCH Final", f"Returning {len(unique_matches)} unique matches: {[p['name'] for p in unique_matches]}"))
+    log_info(f"FUZZY MATCH Final", f"Returning {len(unique_matches)} unique matches: {[p['name'] for p in unique_matches]}")
     return unique_matches
 
 # -------- MAIN PLAYER CHECKING FUNCTION --------
