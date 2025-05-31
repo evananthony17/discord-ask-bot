@@ -17,6 +17,9 @@ from recent_mentions import check_recent_player_mentions, check_fallback_recent_
 from selection_handlers import start_selection_timeout, cancel_selection_timeout, handle_disambiguation_selection, handle_block_selection, cleanup_invalid_selection
 from bot_logic import process_approved_question, get_potential_player_words, handle_multi_player_question, handle_single_player_question
 
+# -------- DUPLICATE PREVENTION --------
+processing_users = set()
+
 # -------- SETUP INTENTS --------
 intents = discord.Intents.default()
 intents.guilds = True
@@ -131,76 +134,89 @@ async def ask_question(ctx, *, question: str = None):
         await error_msg.delete(delay=5)
         return
 
-    # Prevent duplicate processing - check if user already has pending selection
-    if ctx.author.id in pending_selections:
-        print(f"DUPLICATE PREVENTION: User {ctx.author.id} already has pending selection, ignoring")
-        return
-
-    # Validate question through all checks
-    is_valid, error_message, error_category = validate_question(question)
-    if not is_valid:
-        try:
-            await ctx.message.delete()
-        except:
-            pass
-        error_msg = await ctx.send(error_message)
-        await error_msg.delete(delay=5)
-        return
-
-    # Check for player names
-    if not players_data:
-        error_msg = await ctx.send("Player database is not available. Please try again later.")
-        await error_msg.delete(delay=5)
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+    # DUPLICATE PREVENTION - Check if user is already being processed
+    if ctx.author.id in processing_users:
+        log_info(f"DUPLICATE PREVENTION: User {ctx.author.id} already being processed, ignoring duplicate")
         return
     
-    matched_players = check_player_mentioned(question)
+    # Add user to processing set
+    processing_users.add(ctx.author.id)
     
-    # Fallback check for potential player words
-    fallback_recent_check = False
-    if not matched_players and is_likely_player_request(question):
-        potential_player_words = get_potential_player_words(question)
-        if potential_player_words:
-            fallback_recent_check = True
-
-    if matched_players:
-        # Handle multiple players
-        if len(matched_players) > 1:
-            # Check if this is an ambiguous single-player question vs intentional multi-player
-            if is_ambiguous_single_player_question(question, matched_players):
-                # Show disambiguation prompt
-                from selection_handlers import create_player_disambiguation_prompt
-                await create_player_disambiguation_prompt(ctx, question, matched_players)
-                return
-            else:
-                # True multi-player question - process all players
-                await handle_multi_player_question(ctx, question, matched_players)
-                return
-        
-        # Handle single player
-        else:
-            await handle_single_player_question(ctx, question, matched_players)
+    try:
+        # Prevent duplicate processing - check if user already has pending selection
+        if ctx.author.id in pending_selections:
+            log_info(f"DUPLICATE PREVENTION: User {ctx.author.id} already has pending selection, ignoring")
             return
-        
-    elif fallback_recent_check:
-        # Fallback recent mentions check
-        potential_player_words = get_potential_player_words(question)
-        found_recent_mention = await check_fallback_recent_mentions(ctx.guild, potential_player_words)
-        
-        if found_recent_mention:
+
+        # Validate question through all checks
+        is_valid, error_message, error_category = validate_question(question)
+        if not is_valid:
             try:
                 await ctx.message.delete()
             except:
                 pass
-            error_msg = await ctx.send("This topic has been asked about recently, please be patient and wait for an answer.")
-            await error_msg.delete(delay=8)
+            error_msg = await ctx.send(error_message)
+            await error_msg.delete(delay=5)
             return
 
-    # All checks passed - post question
-    await process_approved_question(ctx.channel, ctx.author, question, ctx.message)
+        # Check for player names
+        if not players_data:
+            error_msg = await ctx.send("Player database is not available. Please try again later.")
+            await error_msg.delete(delay=5)
+            try:
+                await ctx.message.delete()
+            except:
+                pass
+            return
+        
+        matched_players = check_player_mentioned(question)
+        
+        # Fallback check for potential player words
+        fallback_recent_check = False
+        if not matched_players and is_likely_player_request(question):
+            potential_player_words = get_potential_player_words(question)
+            if potential_player_words:
+                fallback_recent_check = True
+
+        if matched_players:
+            # Handle multiple players
+            if len(matched_players) > 1:
+                # Check if this is an ambiguous single-player question vs intentional multi-player
+                if is_ambiguous_single_player_question(question, matched_players):
+                    # Show disambiguation prompt
+                    from selection_handlers import create_player_disambiguation_prompt
+                    await create_player_disambiguation_prompt(ctx, question, matched_players)
+                    return
+                else:
+                    # True multi-player question - process all players
+                    await handle_multi_player_question(ctx, question, matched_players)
+                    return
+            
+            # Handle single player
+            else:
+                await handle_single_player_question(ctx, question, matched_players)
+                return
+            
+        elif fallback_recent_check:
+            # Fallback recent mentions check
+            potential_player_words = get_potential_player_words(question)
+            found_recent_mention = await check_fallback_recent_mentions(ctx.guild, potential_player_words)
+            
+            if found_recent_mention:
+                try:
+                    await ctx.message.delete()
+                except:
+                    pass
+                error_msg = await ctx.send("This topic has been asked about recently, please be patient and wait for an answer.")
+                await error_msg.delete(delay=8)
+                return
+
+        # All checks passed - post question
+        await process_approved_question(ctx.channel, ctx.author, question, ctx.message)
+        
+    finally:
+        # Always remove user from processing set when done
+        processing_users.discard(ctx.author.id)
 
 # -------- REACTION HANDLER --------
 @bot.event
