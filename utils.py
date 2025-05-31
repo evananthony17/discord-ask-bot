@@ -121,12 +121,23 @@ def expand_nicknames(text):
 
 def is_likely_player_request(text):
     """Determine if text is likely asking about a player vs casual conversation"""
+    from config import players_data  # Import here to avoid circular imports
+    
     normalized = normalize_name(text)
     words = normalized.split()
     
     # Very short queries are probably not player requests unless they look like names
     if len(words) == 1 and len(words[0]) <= 4:
-        return False
+        # For 4-letter words, check if it's likely a surname
+        if len(words[0]) == 4:
+            # Check if it exists in our player database (case insensitive)
+            word_lower = words[0].lower()
+            if any(word_lower in normalize_name(player['name']).lower() 
+                   for player in players_data):
+                return True  # Found in database, likely a player name
+            return False  # 4-letter word but not a known player name
+        else:
+            return False  # 1-3 letter words are definitely not player names
     
     # Look for obvious non-player patterns using WORD BOUNDARIES
     casual_patterns = [
