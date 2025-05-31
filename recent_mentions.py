@@ -73,6 +73,7 @@ async def check_recent_player_mentions(guild, players_to_check):
                 log_error(f"RECENT MENTION CHECK: Error checking final channel: {e}")
         
         # Determine status based on where the player was found
+        log_info(f"RECENT MENTION CHECK: Processing status for {player['name']} - found_in_answering: {found_in_answering}, found_in_final: {found_in_final}")
         status = None
         if found_in_answering and found_in_final:
             status = "answered"  # Asked and answered
