@@ -1,6 +1,6 @@
 import re
 import discord
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from config import FINAL_ANSWER_CHANNEL, ANSWERING_CHANNEL, RECENT_MENTION_HOURS, RECENT_MENTION_LIMIT
 from utils import normalize_name
 from logging_system import log_error
@@ -13,7 +13,7 @@ async def check_recent_player_mentions(guild, players_to_check):
     for p in players_to_check:
         print(f"🕒 RECENT MENTION CHECK: Looking for '{p['name']}' ({p['team']})")
     
-    time_threshold = datetime.now(datetime.timezone.utc) - timedelta(hours=RECENT_MENTION_HOURS)
+    time_threshold = datetime.now(timezone.utc) - timedelta(hours=RECENT_MENTION_HOURS)
     print(f"🕒 RECENT MENTION CHECK: Time threshold: {time_threshold}")
     recent_mentions = []
     
@@ -112,7 +112,7 @@ async def check_recent_player_mentions(guild, players_to_check):
 
 async def check_fallback_recent_mentions(guild, potential_player_words):
     """Fallback check for recent mentions using potential player words"""
-    time_threshold = datetime.now(datetime.timezone.utc) - timedelta(hours=RECENT_MENTION_HOURS)
+    time_threshold = datetime.now(timezone.utc) - timedelta(hours=RECENT_MENTION_HOURS)
     
     answering_channel = discord.utils.get(guild.text_channels, name=ANSWERING_CHANNEL)
     final_channel = discord.utils.get(guild.text_channels, name=FINAL_ANSWER_CHANNEL)
