@@ -108,6 +108,11 @@ async def ask_question(ctx, *, question: str = None):
         await error_msg.delete(delay=5)
         return
 
+    # Prevent duplicate processing - check if user already has pending selection
+    if ctx.author.id in pending_selections:
+        print(f"DUPLICATE PREVENTION: User {ctx.author.id} already has pending selection, ignoring")
+        return
+
     # Validate question through all checks
     is_valid, error_message, error_category = validate_question(question)
     if not is_valid:
@@ -141,13 +146,13 @@ async def ask_question(ctx, *, question: str = None):
     if matched_players:
         # Handle multiple players (process all of them)
         if len(matched_players) > 1:
-            blocked = await handle_multi_player_question(ctx, question, matched_players)
-            return  # Either blocked or processed
+            await handle_multi_player_question(ctx, question, matched_players)
+            return
         
         # Handle single player
         else:
-            blocked = await handle_single_player_question(ctx, question, matched_players)
-            return  # Either blocked or processed
+            await handle_single_player_question(ctx, question, matched_players)
+            return
         
     elif fallback_recent_check:
         # Fallback recent mentions check
