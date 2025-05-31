@@ -9,7 +9,8 @@ from logging_system import log_error
 
 async def check_recent_player_mentions(guild, players_to_check):
     """Check if any of the players were mentioned in the last X hours in bot messages only"""
-    print(f"RECENT MENTION CHECK: Checking {len(players_to_check)} players")
+    from logging_system import log_info
+    log_info(f"RECENT MENTION CHECK: Checking {len(players_to_check)} players")
     for p in players_to_check:
         print(f"RECENT MENTION CHECK: Looking for '{p['name']}' ({p['team']})")
     
