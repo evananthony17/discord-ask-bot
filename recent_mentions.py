@@ -46,7 +46,7 @@ async def check_recent_player_mentions(guild, players_to_check):
                         message_normalized = normalize_name(message.content)
                         if (re.search(rf"\b{re.escape(player_name_normalized)}\b", message_normalized) or 
                             player_uuid in message_normalized):
-                            print(f"RECENT MENTION CHECK: Found {player['name']} in bot message in answering channel")
+                            log_info(f"RECENT MENTION CHECK: Found {player['name']} in bot message in answering channel")
                             print(f"RECENT MENTION CHECK: Message content snippet: '{message.content[:100]}...'")
                             found_in_answering = True
                             break
@@ -85,7 +85,7 @@ async def check_recent_player_mentions(guild, players_to_check):
             status = "answered"  # Edge case: only in final (shouldn't happen normally)
             print(f"RECENT MENTION CHECK: {player['name']} found only in final channel - status: answered (edge case)")
         else:
-            print(f"RECENT MENTION CHECK: {player['name']} NOT FOUND in either channel")
+            log_info(f"RECENT MENTION CHECK: {player['name']} NOT FOUND in either channel")
         # If not found in either channel, status remains None (no recent mention)
         
         # Add to results if found (avoid duplicates by name+team)
