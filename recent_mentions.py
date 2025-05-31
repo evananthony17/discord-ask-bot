@@ -12,7 +12,7 @@ async def check_recent_player_mentions(guild, players_to_check):
     from logging_system import log_info
     log_info(f"RECENT MENTION CHECK: Checking {len(players_to_check)} players")
     for p in players_to_check:
-        print(f"RECENT MENTION CHECK: Looking for '{p['name']}' ({p['team']})")
+        log_info(f"RECENT MENTION CHECK: Looking for '{p['name']}' ({p['team']})")
     
     time_threshold = datetime.now(timezone.utc) - timedelta(hours=RECENT_MENTION_HOURS)
     print(f"RECENT MENTION CHECK: Time threshold: {time_threshold}")
