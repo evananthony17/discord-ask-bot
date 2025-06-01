@@ -25,14 +25,14 @@ async def check_recent_player_mentions(guild, players_to_check):
     log_info(f"RECENT MENTION CHECK: Answering channel: {answering_channel}")
     
     for player in players_to_check:
+        # FIXED: Reset the flags for each player
+        found_in_answering = False
+        found_in_final = False
+        
         player_name_normalized = normalize_name(player['name'])
         player_uuid = player['uuid'].lower()
         
         log_info(f"RECENT MENTION CHECK: Checking player '{player['name']}' (normalized: '{player_name_normalized}', uuid: {player_uuid[:8]}...)")
-        
-        # Track where the player was found
-        found_in_answering = False
-        found_in_final = False
         
         # Check question reposting channel (answering channel) for BOT messages only
         if answering_channel:
@@ -49,9 +49,8 @@ async def check_recent_player_mentions(guild, players_to_check):
                             log_info(f"RECENT MENTION CHECK: Found {player['name']} in bot message in answering channel")
                             log_info(f"RECENT MENTION CHECK: Match details - player_normalized: '{player_name_normalized}', message_snippet: '{message_normalized[:100]}...', uuid: '{player_uuid[:8]}'")
                             log_info(f"RECENT MENTION CHECK: Message content snippet: '{message.content[:100]}...'")
-                            log_info(f"RECENT MENTION CHECK: SETTING found_in_answering = True")
                             found_in_answering = True
-                            log_info(f"RECENT MENTION CHECK: found_in_answering is now: {found_in_answering}")
+                            log_info(f"RECENT MENTION CHECK: SETTING found_in_answering = True")
                             break
                 log_info(f"RECENT MENTION CHECK: Checked {message_count} messages in answering channel")
             except Exception as e:
@@ -72,17 +71,16 @@ async def check_recent_player_mentions(guild, players_to_check):
                             log_info(f"RECENT MENTION CHECK: Found {player['name']} in bot message in final channel")
                             log_info(f"RECENT MENTION CHECK: Match details - player_normalized: '{player_name_normalized}', message_snippet: '{message_normalized[:100]}...', uuid: '{player_uuid[:8]}'")
                             log_info(f"RECENT MENTION CHECK: Message content snippet: '{message.content[:100]}...'")
-                            log_info(f"RECENT MENTION CHECK: SETTING found_in_final = True")
                             found_in_final = True
-                            log_info(f"RECENT MENTION CHECK: found_in_final is now: {found_in_final}")
+                            log_info(f"RECENT MENTION CHECK: SETTING found_in_final = True")
                             break
                 log_info(f"RECENT MENTION CHECK: Checked {message_count} messages in final channel")
             except Exception as e:
                 log_error(f"RECENT MENTION CHECK: Error checking final channel: {e}")
         
-        # Determine status based on where the player was found
+        # FIXED: Determine status based on where the player was found
         log_info(f"RECENT MENTION CHECK: Processing status for {player['name']} - found_in_answering: {found_in_answering}, found_in_final: {found_in_final}")
-        log_info(f"RECENT MENTION CHECK: About to determine status...")
+        
         status = None
         if found_in_answering and found_in_final:
             status = "answered"  # Asked and answered
@@ -95,7 +93,7 @@ async def check_recent_player_mentions(guild, players_to_check):
             log_info(f"RECENT MENTION CHECK: {player['name']} found only in final channel - status: answered (edge case)")
         else:
             log_info(f"RECENT MENTION CHECK: {player['name']} NOT FOUND in either channel")
-        # If not found in either channel, status remains None (no recent mention)
+            # status remains None - no recent mention
         
         # Add to results if found (avoid duplicates by name+team)
         if status:
