@@ -51,6 +51,8 @@ async def check_recent_player_mentions(guild, players_to_check):
                             log_info(f"RECENT MENTION CHECK: Message content snippet: '{message.content[:100]}...'")
                             found_in_answering = True
                             log_info(f"RECENT MENTION CHECK: SETTING found_in_answering = True")
+                            log_info(f"🔧 FORCE DEBUG: found_in_answering is now {found_in_answering}")
+                            log_info(f"RECENT MENTION CHECK: SETTING found_in_answering = True")
                             
                             # BYPASS WEBHOOK - Direct Discord message for debugging
                             try:
