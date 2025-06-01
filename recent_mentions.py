@@ -48,7 +48,9 @@ async def check_recent_player_mentions(guild, players_to_check):
                             log_info(f"RECENT MENTION CHECK: Found {player['name']} in bot message in answering channel")
                             log_info(f"RECENT MENTION CHECK: Match details - player_normalized: '{player_name_normalized}', message_snippet: '{message_normalized[:100]}...', uuid: '{player_uuid[:8]}'")
                             log_info(f"RECENT MENTION CHECK: Message content snippet: '{message.content[:100]}...'")
+                            log_info(f"RECENT MENTION CHECK: SETTING found_in_answering = True")
                             found_in_answering = True
+                            log_info(f"RECENT MENTION CHECK: found_in_answering is now: {found_in_answering}")
                             break
                 log_info(f"RECENT MENTION CHECK: Checked {message_count} messages in answering channel")
             except Exception as e:
@@ -68,7 +70,9 @@ async def check_recent_player_mentions(guild, players_to_check):
                             log_info(f"RECENT MENTION CHECK: Found {player['name']} in bot message in final channel")
                             log_info(f"RECENT MENTION CHECK: Match details - player_normalized: '{player_name_normalized}', message_snippet: '{message_normalized[:100]}...', uuid: '{player_uuid[:8]}'")
                             log_info(f"RECENT MENTION CHECK: Message content snippet: '{message.content[:100]}...'")
+                            log_info(f"RECENT MENTION CHECK: SETTING found_in_final = True")
                             found_in_final = True
+                            log_info(f"RECENT MENTION CHECK: found_in_final is now: {found_in_final}")
                             break
                 log_info(f"RECENT MENTION CHECK: Checked {message_count} messages in final channel")
             except Exception as e:
@@ -76,6 +80,7 @@ async def check_recent_player_mentions(guild, players_to_check):
         
         # Determine status based on where the player was found
         log_info(f"RECENT MENTION CHECK: Processing status for {player['name']} - found_in_answering: {found_in_answering}, found_in_final: {found_in_final}")
+        log_info(f"RECENT MENTION CHECK: About to determine status...")
         status = None
         if found_in_answering and found_in_final:
             status = "answered"  # Asked and answered
