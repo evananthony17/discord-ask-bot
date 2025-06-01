@@ -46,6 +46,7 @@ async def check_recent_player_mentions(guild, players_to_check):
                         if (re.search(rf"\b{re.escape(player_name_normalized)}\b", message_normalized) or 
                             player_uuid in message_normalized):
                             log_info(f"RECENT MENTION CHECK: Found {player['name']} in bot message in answering channel")
+                            log_info(f"RECENT MENTION CHECK: Match details - player_normalized: '{player_name_normalized}', message_snippet: '{message_normalized[:100]}...', uuid: '{player_uuid[:8]}'")
                             log_info(f"RECENT MENTION CHECK: Message content snippet: '{message.content[:100]}...'")
                             found_in_answering = True
                             break
@@ -65,6 +66,7 @@ async def check_recent_player_mentions(guild, players_to_check):
                         if (re.search(rf"\b{re.escape(player_name_normalized)}\b", message_normalized) or 
                             player_uuid in message_normalized):
                             log_info(f"RECENT MENTION CHECK: Found {player['name']} in bot message in final channel")
+                            log_info(f"RECENT MENTION CHECK: Match details - player_normalized: '{player_name_normalized}', message_snippet: '{message_normalized[:100]}...', uuid: '{player_uuid[:8]}'")
                             log_info(f"RECENT MENTION CHECK: Message content snippet: '{message.content[:100]}...'")
                             found_in_final = True
                             break
