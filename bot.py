@@ -264,20 +264,22 @@ async def on_reaction_add(reaction, user):
             # Handle different selection types
             if selection_data.get("type") == "block_selection":
                 await handle_block_selection(reaction, user, selected_player, selection_data)
-                return
+                return  # ALWAYS return after handling block selection
             
             elif selection_data.get("type") == "disambiguation_selection":
                 blocked = await handle_disambiguation_selection(reaction, user, selected_player, selection_data)
-                if not blocked:
-                    return  # Question was processed
+                if blocked:
+                    # Question was blocked - EXIT IMMEDIATELY, don't process further
+                    log_info(f"🔧 RACE CONDITION FIX: Question blocked for {selected_player['name']}, returning early")
+                    return
+                else:
+                    # Question was not blocked - EXIT IMMEDIATELY, it was already processed in the handler
+                    log_info(f"🔧 RACE CONDITION FIX: Question processed for {selected_player['name']}, returning early") 
+                    return
             
-            # Fallback - shouldn't happen with current logic
-            await process_approved_question(
-                reaction.message.channel, 
-                user, 
-                selection_data["original_question"],
-                selection_data.get("original_user_message")
-            )
+            # This fallback should NEVER execute with proper logic above
+            log_error(f"🚨 RACE CONDITION BUG: Unexpected fallback execution for {selected_player['name']} - this should not happen!")
+            return  # Don't process the question if we reach this point
     
     # Invalid reaction - clean up
     else:
