@@ -51,6 +51,15 @@ async def check_recent_player_mentions(guild, players_to_check):
                             log_info(f"RECENT MENTION CHECK: Message content snippet: '{message.content[:100]}...'")
                             found_in_answering = True
                             log_info(f"RECENT MENTION CHECK: SETTING found_in_answering = True")
+                            
+                            # BYPASS WEBHOOK - Direct Discord message for debugging
+                            try:
+                                logs_channel = discord.utils.get(guild.text_channels, name="bernie-stock-logs")
+                                if logs_channel:
+                                    await logs_channel.send(f"🔧 **DEBUG**: found_in_answering = True for {player['name']}")
+                            except:
+                                pass  # Don't let debug messages break the bot
+                            
                             break
                 log_info(f"RECENT MENTION CHECK: Checked {message_count} messages in answering channel")
             except Exception as e:
@@ -73,6 +82,15 @@ async def check_recent_player_mentions(guild, players_to_check):
                             log_info(f"RECENT MENTION CHECK: Message content snippet: '{message.content[:100]}...'")
                             found_in_final = True
                             log_info(f"RECENT MENTION CHECK: SETTING found_in_final = True")
+                            
+                            # BYPASS WEBHOOK - Direct Discord message for debugging
+                            try:
+                                logs_channel = discord.utils.get(guild.text_channels, name="bernie-stock-logs")
+                                if logs_channel:
+                                    await logs_channel.send(f"🔧 **DEBUG**: found_in_final = True for {player['name']}")
+                            except:
+                                pass  # Don't let debug messages break the bot
+                            
                             break
                 log_info(f"RECENT MENTION CHECK: Checked {message_count} messages in final channel")
             except Exception as e:
@@ -80,6 +98,14 @@ async def check_recent_player_mentions(guild, players_to_check):
         
         # FIXED: Determine status based on where the player was found
         log_info(f"RECENT MENTION CHECK: Processing status for {player['name']} - found_in_answering: {found_in_answering}, found_in_final: {found_in_final}")
+        
+        # BYPASS WEBHOOK - Direct Discord message for status processing
+        try:
+            logs_channel = discord.utils.get(guild.text_channels, name="bernie-stock-logs")
+            if logs_channel:
+                await logs_channel.send(f"🔧 **DEBUG**: Processing {player['name']} - answering: {found_in_answering}, final: {found_in_final}")
+        except:
+            pass
         
         status = None
         if found_in_answering and found_in_final:
@@ -94,6 +120,14 @@ async def check_recent_player_mentions(guild, players_to_check):
         else:
             log_info(f"RECENT MENTION CHECK: {player['name']} NOT FOUND in either channel")
             # status remains None - no recent mention
+        
+        # BYPASS WEBHOOK - Direct Discord message for status result
+        try:
+            logs_channel = discord.utils.get(guild.text_channels, name="bernie-stock-logs")
+            if logs_channel:
+                await logs_channel.send(f"🔧 **DEBUG**: {player['name']} status determined: {status}")
+        except:
+            pass
         
         # Add to results if found (avoid duplicates by name+team)
         if status:
@@ -112,6 +146,24 @@ async def check_recent_player_mentions(guild, players_to_check):
                     "status": status
                 })
                 log_info(f"RECENT MENTION CHECK: Added recent mention: {player['name']} ({player['team']}) - {status}")
+                
+                # BYPASS WEBHOOK - Direct Discord message for adding to results
+                try:
+                    logs_channel = discord.utils.get(guild.text_channels, name="bernie-stock-logs")
+                    if logs_channel:
+                        await logs_channel.send(f"🔧 **DEBUG**: ADDED to results: {player['name']} ({player['team']}) - {status}")
+                except:
+                    pass
+    
+    # BYPASS WEBHOOK - Direct Discord message for final result
+    try:
+        logs_channel = discord.utils.get(guild.text_channels, name="bernie-stock-logs")
+        if logs_channel:
+            await logs_channel.send(f"🔧 **DEBUG**: Final return - {len(recent_mentions)} mentions found")
+            for mention in recent_mentions:
+                await logs_channel.send(f"🔧 **DEBUG**: Returning player {mention['player']['name']} with status {mention['status']}")
+    except:
+        pass
     
     log_info(f"RECENT MENTION CHECK: Final result: {len(recent_mentions)} recent mentions found")
     return recent_mentions
