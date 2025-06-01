@@ -1,7 +1,7 @@
 import asyncio
 from datetime import datetime
 from config import SELECTION_TIMEOUT, pending_selections, timeout_tasks, FINAL_ANSWER_LINK
-from logging_system import log_warning, log_error, log_debug, log_success, log_analytics
+from logging_system import log_warning, log_error, log_debug, log_success, log_analytics, log_info
 
 # -------- ENHANCED TIMEOUT HANDLER --------
 
@@ -116,16 +116,23 @@ async def handle_disambiguation_selection(reaction, user, selected_player, selec
     from recent_mentions import check_recent_player_mentions
     from bot_logic import process_approved_question
     
-    print(f"🎯 User disambiguated to: {selected_player['name']} ({selected_player['team']})")
+    log_info(f"🎯 User disambiguated to: {selected_player['name']} ({selected_player['team']})")
     
     # Check recent mentions for this specific player
     recent_mentions = await check_recent_player_mentions(reaction.message.guild, [selected_player])
     
+    # DEBUG LOGGING - This will show us what's happening
+    log_info(f"🔧 DEBUG: recent_mentions returned: {recent_mentions}")
+    log_info(f"🔧 DEBUG: recent_mentions is truthy: {bool(recent_mentions)}")
+    log_info(f"🔧 DEBUG: Length of recent_mentions: {len(recent_mentions)}")
+    
     if recent_mentions:
+        log_info(f"🔧 DEBUG: Entering blocking logic")
         mention = recent_mentions[0]
         status = mention["status"]
+        log_info(f"🔧 DEBUG: Status is: {status}")
         
-        print(f"🚫 Selected player {selected_player['name']} has recent mention with status: {status}")
+        log_info(f"🚫 Selected player {selected_player['name']} has recent mention with status: {status}")
         
         if status == "answered":
             error_msg = await reaction.message.channel.send(
@@ -140,17 +147,20 @@ async def handle_disambiguation_selection(reaction, user, selected_player, selec
         # Delete the original user message as well
         try:
             await selection_data["original_user_message"].delete()
-            print("✅ Deleted original user message after blocking disambiguation")
+            log_info("✅ Deleted original user message after blocking disambiguation")
         except Exception as e:
-            print(f"❌ Failed to delete original user message: {e}")
+            log_error(f"❌ Failed to delete original user message: {e}")
+        
+        log_info(f"🔧 DEBUG: Returning True (blocked) for {selected_player['name']}")
         return True  # Blocked
     else:
+        log_info(f"🔧 DEBUG: No recent mentions found, proceeding with question")
         # No recent mentions - proceed with the question, adding selected player info
-        print(f"✅ Selected player {selected_player['name']} has no recent mentions - proceeding with question")
+        log_info(f"✅ Selected player {selected_player['name']} has no recent mentions - proceeding with question")
         
         # Append selected player info to make it clear which player they meant
         modified_question = f"{selection_data['original_question']} ({selected_player['name']} - {selected_player['team']})"
-        print(f"🔧 Modified question: {modified_question}")
+        log_info(f"🔧 Modified question: {modified_question}")
         
         await process_approved_question(
             reaction.message.channel,
@@ -158,6 +168,8 @@ async def handle_disambiguation_selection(reaction, user, selected_player, selec
             modified_question,
             selection_data["original_user_message"]
         )
+        
+        log_info(f"🔧 DEBUG: Returning False (not blocked) for {selected_player['name']}")
         return False  # Not blocked, processed
 
 async def handle_block_selection(reaction, user, selected_player, selection_data):
@@ -184,9 +196,9 @@ async def handle_block_selection(reaction, user, selected_player, selection_data
         # Delete the original user message as well
         try:
             await selection_data["original_user_message"].delete()
-            print("✅ Deleted original user message after blocking")
+            log_info("✅ Deleted original user message after blocking")
         except Exception as e:
-            print(f"❌ Failed to delete original user message: {e}")
+            log_error(f"❌ Failed to delete original user message: {e}")
         return True  # Blocked
     
     return False  # Not blocked (shouldn't happen)
@@ -210,7 +222,7 @@ async def create_player_disambiguation_prompt(ctx, question, matched_players):
     """Create a disambiguation prompt when multiple players match an ambiguous search"""
     from config import REACTIONS, pending_selections
     
-    print(f"DISAMBIGUATION: Creating prompt for {len(matched_players)} players")
+    log_info(f"DISAMBIGUATION: Creating prompt for {len(matched_players)} players")
     
     # Log the disambiguation event
     await log_analytics("Question Processed",
@@ -235,12 +247,12 @@ async def create_player_disambiguation_prompt(ctx, question, matched_players):
     try:
         # Send the disambiguation prompt
         prompt_message = await ctx.send(prompt_text)
-        print(f"DISAMBIGUATION: Sent prompt message with ID {prompt_message.id}")
+        log_info(f"DISAMBIGUATION: Sent prompt message with ID {prompt_message.id}")
         
         # Add reaction emojis
         for i in range(len(matched_players[:len(REACTIONS)])):
             await prompt_message.add_reaction(REACTIONS[i])
-            print(f"DISAMBIGUATION: Added reaction {REACTIONS[i]}")
+            log_info(f"DISAMBIGUATION: Added reaction {REACTIONS[i]}")
         
         # Store in pending selections
         pending_selections[ctx.author.id] = {
@@ -255,10 +267,10 @@ async def create_player_disambiguation_prompt(ctx, question, matched_players):
         # Start timeout task
         start_selection_timeout(ctx.author.id, ctx)
         
-        print(f"DISAMBIGUATION: Set up selection for user {ctx.author.id}")
+        log_info(f"DISAMBIGUATION: Set up selection for user {ctx.author.id}")
         
         return True  # Successfully created prompt
         
     except Exception as e:
         log_error(f"DISAMBIGUATION: Failed to create prompt: {e}")
-        return False    
+        return False
