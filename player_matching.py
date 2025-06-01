@@ -33,7 +33,7 @@ def extract_potential_names(text):
                 potential_names.append(segment)
                 print(f"MULTI-PLAYER: Segment {i+1}: '{segment}'")
     
-    # Remove common question words and phrases
+    # EXPANDED: Remove common question words and phrases
     stop_words = {
         'how', 'is', 'was', 'are', 'were', 'doing', 'playing', 'performed', 
         'the', 'a', 'an', 'about', 'what', 'when', 'where', 'why', 'who',
@@ -42,14 +42,26 @@ def extract_potential_names(text):
         'game', 'games', 'update', 'on', 'for', 'with', 'any', 'get', 'stats',
         'more', 'like', 'than', 'then', 'just', 'only', 'also', 'even',
         'much', 'many', 'some', 'all', 'most', 'best', 'worst', 'better', 'worse',
-        # ENHANCED: Add common words that match player names
         'has', 'have', 'had', 'his', 'her', 'him', 'them', 'they', 'their',
         'been', 'being', 'be', 'am', 'as', 'at', 'an', 'or', 'if', 'it',
-        'up', 'out', 'in', 'to', 'of', 'my', 'me', 'we', 'us', 'you', 'your'
+        'up', 'out', 'in', 'to', 'of', 'my', 'me', 'we', 'us', 'you', 'your',
+        # CRITICAL: Add the problematic words we saw in logs
+        'kill', 'quiet', 'hope', 'sure', 'doesnt', 'somehow', 'huh', 'day',
+        'today', 'nice', 'good', 'bad', 'cool', 'awesome', 'great', 'terrible',
+        'amazing', 'fantastic', 'horrible', 'perfect', 'awful', 'wonderful',
+        'excellent', 'outstanding', 'impressive', 'please', 'thanks', 'thank',
+        'sorry', 'excuse', 'hello', 'hey', 'hi', 'bye', 'goodbye', 'yes', 'no',
+        'yeah', 'yep', 'nope', 'okay', 'ok', 'alright', 'right', 'wrong',
+        'true', 'false', 'maybe', 'perhaps', 'probably', 'definitely',
+        'absolutely', 'certainly', 'obviously', 'clearly', 'exactly', 'really',
+        'very', 'quite', 'pretty', 'rather', 'somewhat', 'fairly', 'totally',
+        'completely', 'entirely', 'fully', 'mostly', 'largely', 'mainly',
+        'basically', 'essentially', 'generally', 'usually', 'normally',
+        'typically', 'often', 'sometimes', 'rarely', 'never', 'always'
     }
     
-    # ENHANCED: Add minimum length requirement for individual words
-    min_word_length = 4  # "has" (3 chars) won't match anymore
+    # ENHANCED: Increase minimum length requirement for individual words
+    min_word_length = 5  # Changed from 4 to 5 to eliminate "kill", "hope", etc.
     
     # Split into words and remove stop words
     words = text_normalized.split()
@@ -67,21 +79,30 @@ def extract_potential_names(text):
         if len(name_combo) >= 10:  # Minimum reasonable 3-word name length
             potential_names.append(name_combo)
     
-    # ENHANCED: Only add individual words if they're reasonably long and look name-like
+    # ENHANCED: Expanded non-name words and stricter criteria for individual words
     non_name_words = {
         'stats', 'news', 'info', 'question', 'playing', 'game', 'season', 'year', 'team',
         'downdate', 'upgrade', 'downgrade', 'update', 'like', 'more', 'less', 'better', 'worse',
         'good', 'bad', 'nice', 'cool', 'awesome', 'great', 'terrible', 'amazing', 'fantastic',
         'horrible', 'perfect', 'awful', 'wonderful', 'excellent', 'outstanding', 'impressive',
         'doing', 'going', 'coming', 'looking', 'getting', 'having', 'being', 'seeing',
-        'thinking', 'feeling', 'knowing', 'saying', 'telling', 'asking', 'giving', 'taking'
+        'thinking', 'feeling', 'knowing', 'saying', 'telling', 'asking', 'giving', 'taking',
+        # CRITICAL: Add more problematic words
+        'quiet', 'somehow', 'doesnt', 'players', 'player', 'baseball', 'football', 'basketball',
+        'hockey', 'soccer', 'sports', 'athlete', 'athletes', 'roster', 'trade', 'trades',
+        'draft', 'drafts', 'contract', 'contracts', 'salary', 'salaries', 'money', 'dollars',
+        'worth', 'value', 'performance', 'talent', 'skill', 'skills', 'ability', 'abilities'
     }
     
+    # STRICTER: Only add individual words if they pass multiple criteria
     for word in filtered_words:
         if (len(word) >= min_word_length and 
             word not in non_name_words and 
             not word.isdigit() and  # No pure numbers
-            word.isalpha()):  # Only alphabetic characters
+            word.isalpha() and  # Only alphabetic characters
+            # NEW: Additional name-like criteria
+            word[0].isupper() and  # Should start with capital (names usually do)
+            len([c for c in word if c.isupper()]) <= 2):  # Not ALL CAPS or too many caps
             potential_names.append(word)
     
     # Special case: if the input is very short and simple, add it directly (but still filter)
