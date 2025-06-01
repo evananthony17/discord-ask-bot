@@ -43,8 +43,9 @@ async def check_recent_player_mentions(guild, players_to_check):
                     # Only check messages from the bot itself
                     if message.author == guild.me:  # guild.me is the bot
                         message_normalized = normalize_name(message.content)
-                        if (re.search(rf"\b{re.escape(player_name_normalized)}", message_normalized) or 
-                            player_uuid in message_normalized):
+                        # Fix multiline regex pattern
+                        pattern = f"\\b{re.escape(player_name_normalized)}"
+                        if (re.search(pattern, message_normalized) or player_uuid in message_normalized):
                             log_info(f"RECENT MENTION CHECK: Found {player['name']} in bot message in answering channel")
                             log_info(f"RECENT MENTION CHECK: Match details - player_normalized: '{player_name_normalized}', message_snippet: '{message_normalized[:100]}...', uuid: '{player_uuid[:8]}'")
                             log_info(f"RECENT MENTION CHECK: Message content snippet: '{message.content[:100]}...'")
@@ -65,8 +66,9 @@ async def check_recent_player_mentions(guild, players_to_check):
                     # Only check messages from the bot itself
                     if message.author == guild.me:  # guild.me is the bot
                         message_normalized = normalize_name(message.content)
-                        if (re.search(rf"\b{re.escape(player_name_normalized)}", message_normalized) or 
-                            player_uuid in message_normalized):
+                        # Fix multiline regex pattern  
+                        pattern = f"\\b{re.escape(player_name_normalized)}"
+                        if (re.search(pattern, message_normalized) or player_uuid in message_normalized):
                             log_info(f"RECENT MENTION CHECK: Found {player['name']} in bot message in final channel")
                             log_info(f"RECENT MENTION CHECK: Match details - player_normalized: '{player_name_normalized}', message_snippet: '{message_normalized[:100]}...', uuid: '{player_uuid[:8]}'")
                             log_info(f"RECENT MENTION CHECK: Message content snippet: '{message.content[:100]}...'")
