@@ -134,23 +134,30 @@ async def handle_disambiguation_selection(reaction, user, selected_player, selec
         
         log_info(f"🚫 Selected player {selected_player['name']} has recent mention with status: {status}")
         
-        if status == "answered":
-            error_msg = await reaction.message.channel.send(
-                f"This player has been asked about recently. There is an answer here: {FINAL_ANSWER_LINK}"
-            )
-        else:  # pending
-            error_msg = await reaction.message.channel.send(
-                "This player has been asked about recently, please be patient and wait for an answer."
-            )
+        # Send blocking message
+        try:
+            if status == "answered":
+                error_msg = await reaction.message.channel.send(
+                    f"This player has been asked about recently. There is an answer here: {FINAL_ANSWER_LINK}"
+                )
+            else:  # pending
+                error_msg = await reaction.message.channel.send(
+                    "This player has been asked about recently, please be patient and wait for an answer."
+                )
+            
+            await error_msg.delete(delay=8)
+            log_info(f"✅ Sent and scheduled deletion of blocking message")
+        except Exception as e:
+            log_error(f"❌ Failed to send blocking message: {e}")
         
-        await error_msg.delete(delay=8)
-        # Delete the original user message as well
+        # Delete the original user message - but don't let exceptions stop the blocking
         try:
             await selection_data["original_user_message"].delete()
             log_info("✅ Deleted original user message after blocking disambiguation")
         except Exception as e:
             log_error(f"❌ Failed to delete original user message: {e}")
         
+        # ALWAYS return True when blocking, regardless of any exceptions above
         log_info(f"🔧 DEBUG: Returning True (blocked) for {selected_player['name']}")
         return True  # Blocked
     else:
