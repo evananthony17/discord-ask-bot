@@ -263,7 +263,7 @@ def check_player_mentioned(text):
         print(f"🏷️ NICKNAME: Using expanded text: '{expanded_text}'")
         text = expanded_text
     
-    # FIXED: Enhanced direct matches with better logic
+    # 🔧 FIXED: Much stricter direct matching logic
     text_normalized = normalize_name(text)
     direct_matches = []
     
@@ -277,22 +277,23 @@ def check_player_mentioned(text):
         name_contains_query = text_normalized in player_name_normalized
         query_contains_name = player_name_normalized in text_normalized
         
-        # NEW: Check for lastname-only matches
-        name_parts = player_name_normalized.split()
+        # 🔧 FIXED: Much stricter lastname matching using word boundaries
         lastname_match = False
+        name_parts = player_name_normalized.split()
         if len(name_parts) >= 2:
             lastname = name_parts[-1]
-            lastname_match = (text_normalized == lastname or 
-                            text_normalized in lastname or 
-                            lastname in text_normalized)
+            # Use word boundaries to prevent "ken" matching "skenes"
+            lastname_pattern = f"\\b{re.escape(lastname)}\\b"
+            lastname_match = bool(re.search(lastname_pattern, text_normalized))
         
-        # NEW: Check for firstname-only matches  
+        # 🔧 FIXED: Much stricter firstname matching using word boundaries
         firstname_match = False
         if len(name_parts) >= 1:
             firstname = name_parts[0]
-            firstname_match = (text_normalized == firstname or
-                             text_normalized in firstname or  
-                             firstname in text_normalized)
+            # Use word boundaries and require minimum length
+            if len(firstname) >= 4:  # Don't match very short first names
+                firstname_pattern = f"\\b{re.escape(firstname)}\\b"
+                firstname_match = bool(re.search(firstname_pattern, text_normalized))
         
         if exact_match or name_contains_query or query_contains_name or lastname_match or firstname_match:
             print(f"🔧 DIRECT MATCH FOUND: '{text_normalized}' → {player['name']} ({player['team']})")
