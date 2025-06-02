@@ -248,7 +248,7 @@ def fuzzy_match_players(text, max_results=8):
 # -------- MAIN PLAYER CHECKING FUNCTION --------
 
 def check_player_mentioned(text):
-    """🔧 FIXED: Check if any player is mentioned with EXACT MATCH PRIORITY"""
+    """🔧 FIXED: Check if any player is mentioned with EXACT MATCH PRIORITY and individual word extraction"""
     start_time = datetime.now()
     
     log_info(f"CHECK PLAYER: Looking for players in '{text}'")
@@ -262,12 +262,111 @@ def check_player_mentioned(text):
         log_info(f"NICKNAME: Using expanded text: '{expanded_text}'")
         text = expanded_text
     
-    # 🔧 FIXED: STEP 1 - EXACT MATCHES ONLY (highest priority)
+    # 🔧 NEW: Extract individual words and test each one
     text_normalized = normalize_name(text)
     
-    log_info(f"DIRECT MATCH DEBUG: Searching for '{text_normalized}' in {len(players_data)} players")
+    # Stop words to filter out
+    stop_words = {
+        'how', 'is', 'was', 'are', 'were', 'doing', 'playing', 'performed', 
+        'the', 'a', 'an', 'about', 'what', 'when', 'where', 'why', 'who',
+        'should', 'would', 'could', 'can', 'will', 'today', 'yesterday', 
+        'tomorrow', 'this', 'that', 'these', 'those', 'season', 'year', 
+        'game', 'games', 'update', 'on', 'for', 'with', 'any', 'get', 'stats',
+        'more', 'like', 'than', 'then', 'just', 'only', 'also', 'even',
+        'much', 'many', 'some', 'all', 'most', 'best', 'worst', 'better', 'worse',
+        'has', 'have', 'had', 'his', 'her', 'him', 'them', 'they', 'their',
+        'been', 'being', 'be', 'am', 'as', 'at', 'an', 'or', 'if', 'it',
+        'up', 'out', 'in', 'to', 'of', 'my', 'me', 'we', 'us', 'you', 'your',
+        'kill', 'quiet', 'hope', 'sure', 'doesnt', 'somehow', 'huh', 'day',
+        'today', 'nice', 'good', 'bad', 'cool', 'awesome', 'great', 'terrible',
+        'amazing', 'fantastic', 'horrible', 'perfect', 'awful', 'wonderful',
+        'excellent', 'outstanding', 'impressive', 'please', 'thanks', 'thank',
+        'sorry', 'excuse', 'hello', 'hey', 'hi', 'bye', 'goodbye', 'yes', 'no',
+        'yeah', 'yep', 'nope', 'okay', 'ok', 'alright', 'right', 'wrong',
+        'true', 'false', 'maybe', 'perhaps', 'probably', 'definitely',
+        'absolutely', 'certainly', 'obviously', 'clearly', 'exactly', 'really',
+        'very', 'quite', 'pretty', 'rather', 'somewhat', 'fairly', 'totally',
+        'completely', 'entirely', 'fully', 'mostly', 'largely', 'mainly',
+        'basically', 'essentially', 'generally', 'usually', 'normally',
+        'typically', 'often', 'sometimes', 'rarely', 'never', 'always',
+        'do', 'go', 'diamond'  # Added common baseball terms that aren't player names
+    }
     
-    # STEP 1: Look for EXACT MATCHES first
+    # Extract potential player words
+    words = text_normalized.split()
+    potential_player_words = [word for word in words if word not in stop_words and len(word) >= 3]
+    
+    log_info(f"WORD EXTRACTION: Original text: '{text_normalized}'")
+    log_info(f"WORD EXTRACTION: Testing individual words: {potential_player_words}")
+    
+    # Test each word individually for exact and direct matches
+    all_matches = []
+    
+    for word in potential_player_words:
+        log_info(f"TESTING WORD: '{word}'")
+        
+        # STEP 1: Look for EXACT MATCHES on this word
+        exact_matches = []
+        for player in players_data:
+            player_name_normalized = normalize_name(player['name'])
+            
+            # Check if word exactly matches full name
+            if player_name_normalized == word:
+                log_info(f"EXACT MATCH FOUND: '{word}' → {player['name']} ({player['team']})")
+                exact_matches.append(player)
+                continue
+            
+            # Check if word exactly matches any part of the name
+            name_parts = player_name_normalized.split()
+            if word in name_parts:
+                log_info(f"EXACT PART MATCH: '{word}' → {player['name']} ({player['team']})")
+                exact_matches.append(player)
+        
+        if exact_matches:
+            all_matches.extend(exact_matches)
+            continue
+        
+        # STEP 2: Look for other direct matches on this word
+        other_matches = []
+        for player in players_data:
+            player_name_normalized = normalize_name(player['name'])
+            
+            # Substring matches
+            name_contains_query = word in player_name_normalized
+            query_contains_name = player_name_normalized in word
+            
+            if name_contains_query or query_contains_name:
+                log_info(f"SUBSTRING MATCH: '{word}' → {player['name']} ({player['team']})")
+                other_matches.append(player)
+        
+        if other_matches:
+            all_matches.extend(other_matches)
+    
+    # Deduplicate matches
+    if all_matches:
+        seen_players = set()
+        unique_matches = []
+        for player in all_matches:
+            player_key = f"{normalize_name(player['name'])}|{normalize_name(player['team'])}"
+            if player_key not in seen_players:
+                unique_matches.append(player)
+                seen_players.add(player_key)
+                log_info(f"UNIQUE MATCH: Added {player['name']} ({player['team']})")
+        
+        log_info(f"WORD EXTRACTION: Found {len(unique_matches)} total matches from individual words")
+        
+        duration_ms = int((datetime.now() - start_time).total_seconds() * 1000)
+        asyncio.create_task(log_analytics("Player Search",
+            question=text, duration_ms=duration_ms, players_checked=len(players_data),
+            matches_found=len(unique_matches), players_found=unique_matches, search_type="word_extraction"
+        ))
+        return unique_matches
+    
+    log_info(f"WORD EXTRACTION: No matches found from individual words, testing full text as fallback")
+    
+    # 🔧 FALLBACK: If no individual words matched, test the full text (your original logic)
+    
+    # STEP 1: Look for EXACT MATCHES on full text
     exact_matches = []
     for player in players_data:
         player_name_normalized = normalize_name(player['name'])
@@ -275,11 +374,11 @@ def check_player_mentioned(text):
             log_info(f"EXACT MATCH FOUND: '{text_normalized}' → {player['name']} ({player['team']})")
             exact_matches.append(player)
     
-    # 🔧 KEY FIX: If we found exact matches, return ONLY those - skip all other matching
+    # If we found exact matches, return ONLY those - skip all other matching
     if exact_matches:
         log_info(f"EXACT MATCHES: Found {len(exact_matches)} exact matches, skipping other match types")
         
-        # Deduplicate exact matches (shouldn't be needed, but safety first)
+        # Deduplicate exact matches
         seen_players = set()
         unique_exact = []
         for player in exact_matches:
