@@ -289,11 +289,37 @@ def check_player_mentioned(text):
         'completely', 'entirely', 'fully', 'mostly', 'largely', 'mainly',
         'basically', 'essentially', 'generally', 'usually', 'normally',
         'typically', 'often', 'sometimes', 'rarely', 'never', 'always',
-        'do', 'go', 'diamond', 'heat', 'cold'  # Added 'heat' and 'cold' to avoid "heat up" issues
+        'do', 'go', 'diamond', 'heat', 'cold', 'max', 'min'  # Added 'max'/'min' to avoid "maximum/minimum projection" issues
     }
     
     # Extract words and filter
     words = text_normalized.split()
+    
+    # 🔧 SMART CONTEXT-AWARE FILTERING: Only remove "max" if it's clearly "maximum" not a name
+    stats_context_words = {'projection', 'projections', 'stats', 'value', 'ceiling', 'upside', 'potential', 'estimate'}
+    
+    # Only filter "max" if:
+    # 1. It appears with stats words AND
+    # 2. It's NOT followed by a potential last name
+    if 'max' in words and any(stats_word in words for stats_word in stats_context_words):
+        max_index = words.index('max')
+        
+        # Check if "max" is followed by a word that could be a last name
+        has_potential_lastname = False
+        if max_index < len(words) - 1:
+            next_word = words[max_index + 1]
+            # Quick check: if next word is capitalized and not a common stats word, might be a last name
+            common_stats_words = {'projection', 'projections', 'stats', 'value', 'ceiling', 'upside', 'potential', 'estimate', 'points', 'score', 'rating'}
+            if next_word not in common_stats_words and len(next_word) >= 4:
+                has_potential_lastname = True
+        
+        # Only remove "max" if it doesn't seem to be part of a name
+        if not has_potential_lastname:
+            log_info(f"CONTEXT FILTER: Removing 'max' due to stats context (no lastname detected) in: {words}")
+            words = [w for w in words if w != 'max']
+        else:
+            log_info(f"CONTEXT FILTER: Keeping 'max' as it appears to be part of a name: {words}")
+    
     filtered_words = [word for word in words if word not in stop_words and len(word) >= 3]
     
     log_info(f"WORD EXTRACTION: Original text: '{text_normalized}'")
