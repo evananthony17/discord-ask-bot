@@ -263,15 +263,44 @@ def check_player_mentioned(text):
         print(f"🏷️ NICKNAME: Using expanded text: '{expanded_text}'")
         text = expanded_text
     
-    # Direct matches first
+    # FIXED: Enhanced direct matches with better logic
     text_normalized = normalize_name(text)
     direct_matches = []
+    
+    print(f"🔧 DIRECT MATCH DEBUG: Searching for '{text_normalized}' in {len(players_data)} players")
+    
     for player in players_data:
         player_name_normalized = normalize_name(player['name'])
-        if (player_name_normalized in text_normalized or 
-            text_normalized in player_name_normalized or
-            player_name_normalized == text_normalized):
+        
+        # Check for various match types
+        exact_match = player_name_normalized == text_normalized
+        name_contains_query = text_normalized in player_name_normalized
+        query_contains_name = player_name_normalized in text_normalized
+        
+        # NEW: Check for lastname-only matches
+        name_parts = player_name_normalized.split()
+        lastname_match = False
+        if len(name_parts) >= 2:
+            lastname = name_parts[-1]
+            lastname_match = (text_normalized == lastname or 
+                            text_normalized in lastname or 
+                            lastname in text_normalized)
+        
+        # NEW: Check for firstname-only matches  
+        firstname_match = False
+        if len(name_parts) >= 1:
+            firstname = name_parts[0]
+            firstname_match = (text_normalized == firstname or
+                             text_normalized in firstname or  
+                             firstname in text_normalized)
+        
+        if exact_match or name_contains_query or query_contains_name or lastname_match or firstname_match:
+            print(f"🔧 DIRECT MATCH FOUND: '{text_normalized}' → {player['name']} ({player['team']})")
+            print(f"    exact:{exact_match} name_contains:{name_contains_query} query_contains:{query_contains_name}")
+            print(f"    lastname:{lastname_match} firstname:{firstname_match}")
             direct_matches.append(player)
+    
+    print(f"🔧 DIRECT MATCHES DEBUG: Found {len(direct_matches)} total direct matches")
     
     # Deduplicate direct matches
     if direct_matches:
@@ -282,6 +311,11 @@ def check_player_mentioned(text):
             if player_key not in seen_players:
                 unique_direct.append(player)
                 seen_players.add(player_key)
+                print(f"🔧 DIRECT UNIQUE: Added {player['name']} ({player['team']})")
+            else:
+                print(f"🔧 DIRECT DUPLICATE: Skipped {player['name']} ({player['team']})")
+        
+        print(f"🔧 DIRECT FINAL: Returning {len(unique_direct)} unique direct matches")
         
         if unique_direct:
             duration_ms = int((datetime.now() - start_time).total_seconds() * 1000)
@@ -290,6 +324,8 @@ def check_player_mentioned(text):
                 matches_found=len(unique_direct), players_found=unique_direct, search_type="direct_match"
             ))
             return unique_direct
+    
+    print(f"🔧 DIRECT MATCH: No direct matches found, falling back to fuzzy matching")
     
     # Fuzzy matching
     matches = fuzzy_match_players(text, max_results=5)
