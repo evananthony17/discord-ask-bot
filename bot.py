@@ -54,18 +54,23 @@ def is_ambiguous_single_player_question(question, matched_players):
 # -------- EVENTS --------
 @bot.event
 async def on_ready():
+    # Original startup logic (KEEP THIS!)
     print(f"✅ Logged in as {bot.user}")
     
     await log_analytics("Bot Health", event="startup", bot_name=str(bot.user), 
                         total_questions=0, blocked_questions=0, error_count=0)
     
-    # Load data
+    # Load data (CRITICAL - this was missing!)
     banned_categories["profanity"]["words"] = load_words_from_json("profanity.json")
     players_loaded = load_players_from_json("players.json")
     log_info(f"STARTUP: Player list loaded: {len(players_loaded)} players")
     
     load_nicknames_from_json("nicknames.json")
     log_success("Bot is ready and listening for messages!")
+    
+    # NEW: Add cleanup feature
+    log_info("BOT READY: Cleaning up orphaned disambiguation messages")
+    pending_selections.clear()
 
 @bot.event  
 async def on_message(message):
@@ -387,7 +392,7 @@ async def on_reaction_add(reaction, user):
 
 
 # 🔧 SAFEGUARD 6: Cleanup orphaned selections on bot restart
-@bot.event
+'''@bot.event
 async def on_ready():
     """Clean up any orphaned disambiguation messages on restart"""
     log_info("BOT READY: Cleaning up orphaned disambiguation messages")
@@ -396,7 +401,7 @@ async def on_ready():
     pending_selections.clear()
     
     # Optional: You could scan recent messages and delete any that look like
-    # orphaned disambiguation messages, but this might be overkill
+    # orphaned disambiguation messages, but this might be overkill'''
 
 
 # 🔧 SAFEGUARD 7: Admin command to force-clear stuck selections
