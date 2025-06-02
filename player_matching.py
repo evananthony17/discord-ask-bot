@@ -248,7 +248,7 @@ def fuzzy_match_players(text, max_results=8):
 # -------- MAIN PLAYER CHECKING FUNCTION --------
 
 def check_player_mentioned(text):
-    """🔧 FIXED: Check if any player is mentioned with EXACT MATCH PRIORITY and individual word extraction"""
+    """🔧 FIXED: Check if any player is mentioned with COMBINATION-FIRST matching to avoid false positives"""
     start_time = datetime.now()
     
     log_info(f"CHECK PLAYER: Looking for players in '{text}'")
@@ -262,7 +262,7 @@ def check_player_mentioned(text):
         log_info(f"NICKNAME: Using expanded text: '{expanded_text}'")
         text = expanded_text
     
-    # 🔧 NEW: Extract individual words and test each one
+    # 🔧 NEW: COMBINATION-FIRST approach to avoid false positives like "Will Cruz"
     text_normalized = normalize_name(text)
     
     # Stop words to filter out
@@ -289,94 +289,144 @@ def check_player_mentioned(text):
         'completely', 'entirely', 'fully', 'mostly', 'largely', 'mainly',
         'basically', 'essentially', 'generally', 'usually', 'normally',
         'typically', 'often', 'sometimes', 'rarely', 'never', 'always',
-        'do', 'go', 'diamond'  # Added common baseball terms that aren't player names
+        'do', 'go', 'diamond', 'heat', 'cold'  # Added 'heat' and 'cold' to avoid "heat up" issues
     }
     
-    # Extract potential player words
+    # Extract words and filter
     words = text_normalized.split()
-    potential_player_words = [word for word in words if word not in stop_words and len(word) >= 3]
+    filtered_words = [word for word in words if word not in stop_words and len(word) >= 3]
     
     log_info(f"WORD EXTRACTION: Original text: '{text_normalized}'")
-    log_info(f"WORD EXTRACTION: Testing individual words: {potential_player_words}")
+    log_info(f"WORD EXTRACTION: Filtered words: {filtered_words}")
     
-    # Test each word individually for exact and direct matches
-    all_matches = []
+    # 🔧 STEP 1: Test COMBINATIONS first (2-word and 3-word phrases)
+    combination_matches = []
     
-    for word in potential_player_words:
-        log_info(f"TESTING WORD: '{word}'")
+    # Test 2-word combinations
+    for i in range(len(filtered_words) - 1):
+        combo = f"{filtered_words[i]} {filtered_words[i+1]}"
+        log_info(f"TESTING 2-WORD COMBO: '{combo}'")
         
-        # STEP 1: Look for EXACT MATCHES on this word
-        exact_matches = []
+        # Look for exact matches on this combination
         for player in players_data:
             player_name_normalized = normalize_name(player['name'])
             
-            # Check if word exactly matches full name
-            if player_name_normalized == word:
-                log_info(f"EXACT MATCH FOUND: '{word}' → {player['name']} ({player['team']})")
-                exact_matches.append(player)
+            # Check if combo exactly matches full name
+            if player_name_normalized == combo:
+                log_info(f"EXACT COMBO MATCH: '{combo}' → {player['name']} ({player['team']})")
+                combination_matches.append(player)
                 continue
             
-            # Check if word exactly matches any part of the name
-            name_parts = player_name_normalized.split()
-            if word in name_parts:
-                log_info(f"EXACT PART MATCH: '{word}' → {player['name']} ({player['team']})")
-                exact_matches.append(player)
+            # Check if combo is contained in player name
+            if combo in player_name_normalized:
+                log_info(f"CONTAINED COMBO MATCH: '{combo}' → {player['name']} ({player['team']})")
+                combination_matches.append(player)
+    
+    # Test 3-word combinations
+    for i in range(len(filtered_words) - 2):
+        combo = f"{filtered_words[i]} {filtered_words[i+1]} {filtered_words[i+2]}"
+        log_info(f"TESTING 3-WORD COMBO: '{combo}'")
         
-        if exact_matches:
-            all_matches.extend(exact_matches)
-            continue
-        
-        # STEP 2: Look for other direct matches on this word
-        other_matches = []
+        # Look for exact matches on this combination
         for player in players_data:
             player_name_normalized = normalize_name(player['name'])
             
-            # Substring matches
-            name_contains_query = word in player_name_normalized
-            query_contains_name = player_name_normalized in word
+            # Check if combo exactly matches full name
+            if player_name_normalized == combo:
+                log_info(f"EXACT 3-WORD COMBO MATCH: '{combo}' → {player['name']} ({player['team']})")
+                combination_matches.append(player)
+                continue
             
-            if name_contains_query or query_contains_name:
-                log_info(f"SUBSTRING MATCH: '{word}' → {player['name']} ({player['team']})")
-                other_matches.append(player)
-        
-        if other_matches:
-            all_matches.extend(other_matches)
+            # Check if combo is contained in player name
+            if combo in player_name_normalized:
+                log_info(f"CONTAINED 3-WORD COMBO MATCH: '{combo}' → {player['name']} ({player['team']})")
+                combination_matches.append(player)
     
-    # Deduplicate matches
-    if all_matches:
+    # If we found combination matches, prioritize those
+    if combination_matches:
+        log_info(f"COMBINATION MATCHES: Found {len(combination_matches)} matches from combinations")
+        
+        # Deduplicate combination matches
         seen_players = set()
-        unique_matches = []
-        for player in all_matches:
+        unique_combo_matches = []
+        for player in combination_matches:
             player_key = f"{normalize_name(player['name'])}|{normalize_name(player['team'])}"
             if player_key not in seen_players:
-                unique_matches.append(player)
+                unique_combo_matches.append(player)
                 seen_players.add(player_key)
-                log_info(f"UNIQUE MATCH: Added {player['name']} ({player['team']})")
-        
-        log_info(f"WORD EXTRACTION: Found {len(unique_matches)} total matches from individual words")
+                log_info(f"UNIQUE COMBO MATCH: Added {player['name']} ({player['team']})")
         
         duration_ms = int((datetime.now() - start_time).total_seconds() * 1000)
         asyncio.create_task(log_analytics("Player Search",
             question=text, duration_ms=duration_ms, players_checked=len(players_data),
-            matches_found=len(unique_matches), players_found=unique_matches, search_type="word_extraction"
+            matches_found=len(unique_combo_matches), players_found=unique_combo_matches, search_type="combination_match"
         ))
-        return unique_matches
+        return unique_combo_matches
     
-    log_info(f"WORD EXTRACTION: No matches found from individual words, testing full text as fallback")
+    # 🔧 STEP 2: Only test individual words if NO combinations matched
+    log_info(f"COMBINATION MATCHING: No combination matches found, testing individual words")
     
-    # 🔧 FALLBACK: If no individual words matched, test the full text (your original logic)
+    individual_matches = []
     
-    # STEP 1: Look for EXACT MATCHES on full text
+    for word in filtered_words:
+        log_info(f"TESTING INDIVIDUAL WORD: '{word}'")
+        
+        # STRICTER individual word matching - only exact part matches
+        word_matches = []
+        for player in players_data:
+            player_name_normalized = normalize_name(player['name'])
+            
+            # Check if word exactly matches any part of the name (whole words only)
+            name_parts = player_name_normalized.split()
+            if word in name_parts:
+                log_info(f"EXACT PART MATCH: '{word}' → {player['name']} ({player['team']})")
+                word_matches.append(player)
+        
+        # 🔧 VALIDATION: Only accept individual word matches if they seem reasonable
+        if word_matches:
+            # For single-word matches, require additional validation
+            if len(word_matches) > 10:  # Too many matches = probably a common word
+                log_info(f"INDIVIDUAL WORD REJECTED: '{word}' matched {len(word_matches)} players (too many)")
+                continue
+            
+            # Add validated word matches
+            individual_matches.extend(word_matches)
+    
+    # Deduplicate individual matches
+    if individual_matches:
+        seen_players = set()
+        unique_individual_matches = []
+        for player in individual_matches:
+            player_key = f"{normalize_name(player['name'])}|{normalize_name(player['team'])}"
+            if player_key not in seen_players:
+                unique_individual_matches.append(player)
+                seen_players.add(player_key)
+                log_info(f"UNIQUE INDIVIDUAL MATCH: Added {player['name']} ({player['team']})")
+        
+        log_info(f"INDIVIDUAL MATCHING: Found {len(unique_individual_matches)} total matches from individual words")
+        
+        duration_ms = int((datetime.now() - start_time).total_seconds() * 1000)
+        asyncio.create_task(log_analytics("Player Search",
+            question=text, duration_ms=duration_ms, players_checked=len(players_data),
+            matches_found=len(unique_individual_matches), players_found=unique_individual_matches, search_type="individual_word_match"
+        ))
+        return unique_individual_matches
+    
+    log_info(f"INDIVIDUAL WORDS: No matches found from individual words, testing full text as fallback")
+    
+    # 🔧 STEP 3: FALLBACK - Full text matching (your original logic)
+    
+    # STEP 3A: Look for EXACT MATCHES on full text
     exact_matches = []
     for player in players_data:
         player_name_normalized = normalize_name(player['name'])
         if player_name_normalized == text_normalized:
-            log_info(f"EXACT MATCH FOUND: '{text_normalized}' → {player['name']} ({player['team']})")
+            log_info(f"EXACT FULL TEXT MATCH: '{text_normalized}' → {player['name']} ({player['team']})")
             exact_matches.append(player)
     
-    # If we found exact matches, return ONLY those - skip all other matching
+    # If we found exact matches, return ONLY those
     if exact_matches:
-        log_info(f"EXACT MATCHES: Found {len(exact_matches)} exact matches, skipping other match types")
+        log_info(f"EXACT FULL TEXT MATCHES: Found {len(exact_matches)} exact matches")
         
         # Deduplicate exact matches
         seen_players = set()
@@ -391,13 +441,11 @@ def check_player_mentioned(text):
         duration_ms = int((datetime.now() - start_time).total_seconds() * 1000)
         asyncio.create_task(log_analytics("Player Search",
             question=text, duration_ms=duration_ms, players_checked=len(players_data),
-            matches_found=len(unique_exact), players_found=unique_exact, search_type="exact_match"
+            matches_found=len(unique_exact), players_found=unique_exact, search_type="exact_full_text"
         ))
         return unique_exact
     
-    log_info(f"No exact matches found, checking other match types...")
-    
-    # STEP 2: If no exact matches, look for other direct matches
+    # STEP 3B: Other direct matches on full text
     other_matches = []
     for player in players_data:
         player_name_normalized = normalize_name(player['name'])
@@ -406,7 +454,7 @@ def check_player_mentioned(text):
         name_contains_query = text_normalized in player_name_normalized
         query_contains_name = player_name_normalized in text_normalized
         
-        # Only allow meaningful substring matches (not just first name)
+        # Only allow meaningful substring matches
         is_meaningful_substring = False
         if name_contains_query or query_contains_name:
             query_words = text_normalized.split()
@@ -438,7 +486,7 @@ def check_player_mentioned(text):
     
     # If we found other direct matches, return those
     if other_matches:
-        log_info(f"OTHER MATCHES: Found {len(other_matches)} non-exact direct matches")
+        log_info(f"OTHER FULL TEXT MATCHES: Found {len(other_matches)} non-exact direct matches")
         
         # Deduplicate other matches
         seen_players = set()
@@ -453,13 +501,13 @@ def check_player_mentioned(text):
         duration_ms = int((datetime.now() - start_time).total_seconds() * 1000)
         asyncio.create_task(log_analytics("Player Search",
             question=text, duration_ms=duration_ms, players_checked=len(players_data),
-            matches_found=len(unique_other), players_found=unique_other, search_type="direct_match"
+            matches_found=len(unique_other), players_found=unique_other, search_type="full_text_substring"
         ))
         return unique_other
     
-    log_info(f"DIRECT MATCH: No direct matches found, falling back to fuzzy matching")
+    log_info(f"FULL TEXT MATCHING: No direct matches found, falling back to fuzzy matching")
     
-    # STEP 3: Fuzzy matching as final fallback
+    # STEP 4: Fuzzy matching as final fallback
     matches = fuzzy_match_players(text, max_results=5)
     duration_ms = int((datetime.now() - start_time).total_seconds() * 1000)
     
