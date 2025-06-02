@@ -219,21 +219,103 @@ async def ask_question(ctx, *, question: str = None):
         processing_users.discard(ctx.author.id)
 
 # -------- REACTION HANDLER --------
+# -------- ENHANCED REACTION HANDLER WITH SAFEGUARDS --------
+
+# Configuration option
+ALLOW_HELPER_REACTIONS = False  # Set to True if you want to allow helpers
+
 @bot.event
 async def on_reaction_add(reaction, user):
-    if user.bot or user.id not in pending_selections:
+    if user.bot:
         return
     
-    selection_data = pending_selections[user.id]
+    message_id = reaction.message.id
     
-    if reaction.message.id != selection_data["message"].id or selection_data["locked"]:
+    # Find the selection data
+    selection_data = None
+    original_user_id = None
+    storage_key = None
+    
+    if message_id in pending_selections:
+        selection_data = pending_selections[message_id]
+        original_user_id = selection_data.get("user_id")
+        storage_key = message_id
+    else:
+        # Fallback: check if stored by user ID
+        for user_key, data in pending_selections.items():
+            if isinstance(user_key, int) and data.get("message") and data["message"].id == message_id:
+                selection_data = data
+                original_user_id = user_key
+                storage_key = user_key
+                break
+    
+    # No pending selection found
+    if not selection_data:
+        return
+    
+    # 🔧 SAFEGUARD 1: Check if original user is still in server
+    guild = reaction.message.guild
+    original_user = None
+    if guild:
+        try:
+            original_user = await guild.fetch_member(original_user_id)
+        except discord.NotFound:
+            log_info(f"ORPHANED SELECTION: Original user {original_user_id} no longer in server, allowing helper reactions")
+            # Allow anyone to react if original user left
+            original_user_id = user.id
+        except Exception as e:
+            log_error(f"ERROR checking if user {original_user_id} is in server: {e}")
+    
+    # 🔧 SAFEGUARD 2: User validation with helper option
+    if user.id != original_user_id:
+        # Option 1: Strict mode - only original user
+        if not ALLOW_HELPER_REACTIONS and original_user:
+            log_info(f"REACTION BLOCKED: User {user.id} ({user.display_name}) tried to react to question from user {original_user_id}")
+            
+            # Try to remove reaction, but don't fail if we can't
+            try:
+                await reaction.remove(user)
+                log_info(f"REACTION REMOVED: Removed unauthorized reaction from {user.display_name}")
+            except discord.errors.Forbidden:
+                # Bot lacks permission - log but continue
+                log_info(f"REACTION: Bot lacks permission to remove reaction from {user.display_name}, but continuing")
+            except Exception as e:
+                log_error(f"REACTION: Error removing reaction from {user.display_name}: {e}")
+            
+            # Send helpful message with @mention to original user
+            try:
+                original_mention = f"<@{original_user_id}>" if original_user else "the original questioner"
+                await reaction.message.channel.send(
+                    f"{user.mention} Only {original_mention} can select from these options. "
+                    f"If you'd like to help, you can ask them to make a selection!", 
+                    delete_after=8
+                )
+            except:
+                pass
+                
+            return
+        
+        # Option 2: Helper mode - allow with notification
+        elif ALLOW_HELPER_REACTIONS:
+            log_info(f"HELPER REACTION: User {user.id} ({user.display_name}) helping with question from user {original_user_id}")
+            # Continue processing but log it as helper assistance
+    
+    # Verify message and lock status
+    message_obj = selection_data.get("message")
+    if not message_obj or reaction.message.id != message_obj.id or selection_data.get("locked"):
         return
     
     # Lock the selection
     selection_data["locked"] = True
+    log_info(f"REACTION PROCESSING: User {user.id} ({user.display_name}) processing selection")
     
-    # Cancel timeout task
-    cancel_selection_timeout(user.id)
+    # 🔧 SAFEGUARD 3: Enhanced timeout cancellation
+    try:
+        cancel_selection_timeout(original_user_id)
+        # Also try to cancel by message_id if that's how timeouts are stored
+        cancel_selection_timeout(message_id)
+    except Exception as e:
+        log_error(f"ERROR canceling timeout: {e}")
     
     if str(reaction.emoji) in REACTIONS:
         selected_index = REACTIONS.index(str(reaction.emoji))
@@ -241,49 +323,107 @@ async def on_reaction_add(reaction, user):
         if selected_index < len(selection_data["players"]):
             selected_player = selection_data["players"][selected_index]
             
-            # Log analytics for user selection
+            # 🔧 SAFEGUARD 4: Enhanced analytics with helper tracking
+            selection_type = selection_data.get("type", "unknown")
+            if user.id != original_user_id:
+                selection_type += "_helper_assisted"
+            
             await log_analytics("User Selection",
-                user_id=user.id,
+                user_id=original_user_id,  # Always log original user
+                helper_user_id=user.id if user.id != original_user_id else None,
                 user_name=getattr(user, 'display_name', 'Unknown'),
                 channel=reaction.message.channel.name,
                 question=selection_data.get("original_question", "Unknown"),
                 selected_player=f"{selected_player['name']} ({selected_player['team']})",
-                selection_type=selection_data.get("type", "unknown"),
+                selection_type=selection_type,
                 timeout="completed"
             )
             
             # Clean up messages
             try:
                 await selection_data["message"].delete()
-            except:
-                pass
+                log_info(f"CLEANUP: Deleted disambiguation message after selection")
+            except Exception as e:
+                log_error(f"CLEANUP: Error deleting disambiguation message: {e}")
             
-            # Remove from pending
-            del pending_selections[user.id]
+            # 🔧 SAFEGUARD 5: Robust cleanup
+            # Remove from all possible storage locations
+            keys_to_remove = []
+            if message_id in pending_selections:
+                keys_to_remove.append(message_id)
+            if original_user_id in pending_selections:
+                keys_to_remove.append(original_user_id)
+            if storage_key and storage_key not in keys_to_remove:
+                keys_to_remove.append(storage_key)
+            
+            for key in keys_to_remove:
+                try:
+                    del pending_selections[key]
+                    log_info(f"CLEANUP: Removed pending selection key {key}")
+                except KeyError:
+                    pass
             
             # Handle different selection types
             if selection_data.get("type") == "block_selection":
                 await handle_block_selection(reaction, user, selected_player, selection_data)
-                return  # ALWAYS return after handling block selection
+                return
             
             elif selection_data.get("type") == "disambiguation_selection":
                 blocked = await handle_disambiguation_selection(reaction, user, selected_player, selection_data)
                 if blocked:
-                    # Question was blocked - EXIT IMMEDIATELY, don't process further
                     log_info(f"🔧 RACE CONDITION FIX: Question blocked for {selected_player['name']}, returning early")
                     return
                 else:
-                    # Question was not blocked - EXIT IMMEDIATELY, it was already processed in the handler
                     log_info(f"🔧 RACE CONDITION FIX: Question processed for {selected_player['name']}, returning early") 
                     return
             
-            # This fallback should NEVER execute with proper logic above
-            log_error(f"🚨 RACE CONDITION BUG: Unexpected fallback execution for {selected_player['name']} - this should not happen!")
-            return  # Don't process the question if we reach this point
+            log_error(f"🚨 RACE CONDITION BUG: Unexpected fallback execution for {selected_player['name']}")
+            return
     
     # Invalid reaction - clean up
     else:
-        cleanup_invalid_selection(user.id, selection_data)
+        cleanup_invalid_selection(original_user_id, selection_data)
+        log_info(f"CLEANUP: Invalid reaction from user {user.id}, cleaned up selection")
+
+
+# 🔧 SAFEGUARD 6: Cleanup orphaned selections on bot restart
+@bot.event
+async def on_ready():
+    """Clean up any orphaned disambiguation messages on restart"""
+    log_info("BOT READY: Cleaning up orphaned disambiguation messages")
+    
+    # Clear the pending_selections dict since bot restarted
+    pending_selections.clear()
+    
+    # Optional: You could scan recent messages and delete any that look like
+    # orphaned disambiguation messages, but this might be overkill
+
+
+# 🔧 SAFEGUARD 7: Admin command to force-clear stuck selections
+@bot.command(name='clear_stuck')
+@commands.has_permissions(administrator=True)
+async def clear_stuck_selections(ctx, user_id: int = None):
+    """Admin command to clear stuck disambiguation selections"""
+    if user_id:
+        # Clear specific user
+        removed = 0
+        keys_to_remove = []
+        for key, data in pending_selections.items():
+            if data.get("user_id") == user_id:
+                keys_to_remove.append(key)
+        
+        for key in keys_to_remove:
+            del pending_selections[key]
+            removed += 1
+        
+        await ctx.send(f"✅ Cleared {removed} stuck selections for user {user_id}")
+    else:
+        # Clear all
+        count = len(pending_selections)
+        pending_selections.clear()
+        await ctx.send(f"✅ Cleared all {count} pending selections")
+    
+    log_info(f"ADMIN CLEAR: {ctx.author.display_name} cleared stuck selections")
 
 # -------- RUN --------
 if __name__ == "__main__":
