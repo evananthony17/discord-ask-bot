@@ -4,7 +4,7 @@ from datetime import datetime
 from difflib import SequenceMatcher
 from config import players_data
 from utils import normalize_name, expand_nicknames, is_likely_player_request
-from logging_system import log_analytics
+from logging_system import log_analytics, log_info
 
 # -------- NAME EXTRACTION --------
 
@@ -13,7 +13,7 @@ def extract_potential_names(text):
     # First expand nicknames
     expanded_text = expand_nicknames(text)
     if expanded_text != text:
-        print(f"NAME EXTRACTION: Expanded '{text}' to '{expanded_text}'")
+        log_info(f"NAME EXTRACTION: Expanded '{text}' to '{expanded_text}'")
         text = expanded_text
     
     text_normalized = normalize_name(text)
@@ -24,14 +24,14 @@ def extract_potential_names(text):
     segments = re.split(r'\s+(?:and|&|vs\.?|versus|,)\s+', text_normalized, flags=re.IGNORECASE)
     
     if len(segments) > 1:
-        print(f"MULTI-PLAYER: Split '{text}' into {len(segments)} segments: {segments}")
+        log_info(f"MULTI-PLAYER: Split '{text}' into {len(segments)} segments: {segments}")
         
         # Process each segment individually
         for i, segment in enumerate(segments):
             segment = segment.strip()
             if len(segment) >= 3:  # Reasonable minimum length
                 potential_names.append(segment)
-                print(f"MULTI-PLAYER: Segment {i+1}: '{segment}'")
+                log_info(f"MULTI-PLAYER: Segment {i+1}: '{segment}'")
     
     # EXPANDED: Remove common question words and phrases
     stop_words = {
@@ -123,7 +123,7 @@ def extract_potential_names(text):
             unique_names.append(name)
             seen.add(name)
     
-    print(f"NAME EXTRACTION: Found {len(unique_names)} potential names from '{text}': {unique_names}")
+    log_info(f"NAME EXTRACTION: Found {len(unique_names)} potential names from '{text}': {unique_names}")
     return unique_names
 
 # -------- LAST NAME MATCHING --------
@@ -148,7 +148,7 @@ def check_last_name_match(potential_name, player_name):
     
     # Special case: if it's a very close match to a last name, be more lenient
     if similarity >= 0.75:  # Lower threshold for last name only
-        print(f"🎯 LAST NAME MATCH: '{potential_name}' vs last name '{player_last_name}' = {similarity:.3f}")
+        log_info(f"LAST NAME MATCH: '{potential_name}' vs last name '{player_last_name}' = {similarity:.3f}")
         return similarity, True
     
     return None, False
@@ -157,25 +157,24 @@ def check_last_name_match(potential_name, player_name):
 
 def fuzzy_match_players(text, max_results=8):
     """FIXED: Fuzzy match player names and return ALL matches above threshold"""
-    from logging_system import log_info
     
-    print(f"🔍 FUZZY MATCH: Starting for '{text}'")
+    log_info(f"FUZZY MATCH: Starting for '{text}'")
     log_info(f"FUZZY MATCH Starting", f"Query: '{text}'")
     
     if not players_data:
-        print("🔍 FUZZY MATCH: No players data available")
+        log_info(f"FUZZY MATCH: No players data available")
         return []
     
     # Extract potential player names from the text
     potential_names = extract_potential_names(text)
     matches = []
     
-    print(f"🔍 FUZZY MATCH: Testing {len(potential_names)} potential names: {potential_names}")
+    log_info(f"FUZZY MATCH: Testing {len(potential_names)} potential names: {potential_names}")
     log_info(f"FUZZY MATCH Potential Names", f"Found {len(potential_names)} names: {potential_names}")
     
     # Try fuzzy matching with each potential name
     for potential_name in potential_names:
-        print(f"🔍 FUZZY MATCH: Testing potential name: '{potential_name}'")
+        log_info(f"FUZZY MATCH: Testing potential name: '{potential_name}'")
         log_info(f"FUZZY MATCH Testing", f"Name: '{potential_name}'")
         
         for i, player in enumerate(players_data):
@@ -185,7 +184,7 @@ def fuzzy_match_players(text, max_results=8):
             lastname_sim, is_lastname_match = check_last_name_match(potential_name, player_name)
             
             if is_lastname_match and lastname_sim >= 0.75:
-                print(f"✅ LAST NAME MATCH: '{potential_name}' → {player['name']} ({player['team']}) = {lastname_sim:.3f}")
+                log_info(f"LAST NAME MATCH: '{potential_name}' → {player['name']} ({player['team']}) = {lastname_sim:.3f}")
                 matches.append((player, lastname_sim))
                 continue
             
@@ -212,16 +211,16 @@ def fuzzy_match_players(text, max_results=8):
                 threshold = 0.7
             
             if best_similarity >= threshold:
-                print(f"✅ FUZZY MATCH: '{potential_name}' → {player['name']} ({player['team']}) = {best_similarity:.3f} (threshold: {threshold})")
+                log_info(f"FUZZY MATCH: '{potential_name}' → {player['name']} ({player['team']}) = {best_similarity:.3f} (threshold: {threshold})")
                 log_info(f"FUZZY MATCH Found", f"'{potential_name}' → {player['name']} ({player['team']}) = {best_similarity:.3f}")
                 matches.append((player, best_similarity))
             elif best_similarity >= 0.5:  # Log near misses for debugging
-                print(f"❌ NEAR MISS: '{potential_name}' → {player['name']} ({player['team']}) = {best_similarity:.3f} (needed: {threshold})")
+                log_info(f"NEAR MISS: '{potential_name}' → {player['name']} ({player['team']}) = {best_similarity:.3f} (needed: {threshold})")
                 # Only log Acuña near misses to avoid spam
                 if 'acuna' in normalize_name(player['name']).lower():
                     log_info(f"ACUÑA NEAR MISS", f"'{potential_name}' → {player['name']} ({player['team']}) = {best_similarity:.3f} (needed: {threshold})")
     
-    print(f"🔍 FUZZY MATCH: Found {len(matches)} total matches before deduplication")
+    log_info(f"FUZZY MATCH: Found {len(matches)} total matches before deduplication")
     log_info(f"FUZZY MATCH Total", f"Found {len(matches)} matches before deduplication")
     
     # Sort by score and remove duplicates
@@ -232,27 +231,27 @@ def fuzzy_match_players(text, max_results=8):
     for player, score in matches:
         player_key = f"{normalize_name(player['name'])}|{normalize_name(player['team'])}"
         if player_key not in seen_players and len(unique_matches) < max_results:
-            print(f"✅ ADDING MATCH: {player['name']} ({player['team']}) = {score:.3f}")
+            log_info(f"ADDING MATCH: {player['name']} ({player['team']}) = {score:.3f}")
             log_info(f"FUZZY MATCH Adding", f"{player['name']} ({player['team']}) = {score:.3f}")
             unique_matches.append(player)
             seen_players.add(player_key)
         else:
             if player_key in seen_players:
-                print(f"🔄 DUPLICATE SKIPPED: {player['name']} ({player['team']})")
+                log_info(f"DUPLICATE SKIPPED: {player['name']} ({player['team']})")
             else:
-                print(f"📊 MAX RESULTS REACHED: Skipping {player['name']} ({player['team']})")
+                log_info(f"MAX RESULTS REACHED: Skipping {player['name']} ({player['team']})")
     
-    print(f"🔍 FUZZY MATCH: Returning {len(unique_matches)} unique matches")
+    log_info(f"FUZZY MATCH: Returning {len(unique_matches)} unique matches")
     log_info(f"FUZZY MATCH Final", f"Returning {len(unique_matches)} unique matches: {[p['name'] for p in unique_matches]}")
     return unique_matches
 
 # -------- MAIN PLAYER CHECKING FUNCTION --------
 
 def check_player_mentioned(text):
-    """Check if any player is mentioned using improved fuzzy matching"""
+    """🔧 FIXED: Check if any player is mentioned with EXACT MATCH PRIORITY"""
     start_time = datetime.now()
     
-    print(f"🔍 CHECK PLAYER: Looking for players in '{text}'")
+    log_info(f"CHECK PLAYER: Looking for players in '{text}'")
     
     if not players_data or not is_likely_player_request(text):
         return None
@@ -260,75 +259,108 @@ def check_player_mentioned(text):
     # First, expand any nicknames
     expanded_text = expand_nicknames(text)
     if expanded_text != text:
-        print(f"🏷️ NICKNAME: Using expanded text: '{expanded_text}'")
+        log_info(f"NICKNAME: Using expanded text: '{expanded_text}'")
         text = expanded_text
     
-    # 🔧 FIXED: Much stricter direct matching logic
+    # 🔧 FIXED: STEP 1 - EXACT MATCHES ONLY (highest priority)
     text_normalized = normalize_name(text)
-    direct_matches = []
     
-    print(f"🔧 DIRECT MATCH DEBUG: Searching for '{text_normalized}' in {len(players_data)} players")
+    log_info(f"DIRECT MATCH DEBUG: Searching for '{text_normalized}' in {len(players_data)} players")
     
+    # STEP 1: Look for EXACT MATCHES first
+    exact_matches = []
+    for player in players_data:
+        player_name_normalized = normalize_name(player['name'])
+        if player_name_normalized == text_normalized:
+            log_info(f"EXACT MATCH FOUND: '{text_normalized}' → {player['name']} ({player['team']})")
+            exact_matches.append(player)
+    
+    # 🔧 KEY FIX: If we found exact matches, return ONLY those - skip all other matching
+    if exact_matches:
+        log_info(f"EXACT MATCHES: Found {len(exact_matches)} exact matches, skipping other match types")
+        
+        # Deduplicate exact matches (shouldn't be needed, but safety first)
+        seen_players = set()
+        unique_exact = []
+        for player in exact_matches:
+            player_key = f"{normalize_name(player['name'])}|{normalize_name(player['team'])}"
+            if player_key not in seen_players:
+                unique_exact.append(player)
+                seen_players.add(player_key)
+                log_info(f"EXACT UNIQUE: Added {player['name']} ({player['team']})")
+        
+        duration_ms = int((datetime.now() - start_time).total_seconds() * 1000)
+        asyncio.create_task(log_analytics("Player Search",
+            question=text, duration_ms=duration_ms, players_checked=len(players_data),
+            matches_found=len(unique_exact), players_found=unique_exact, search_type="exact_match"
+        ))
+        return unique_exact
+    
+    log_info(f"No exact matches found, checking other match types...")
+    
+    # STEP 2: If no exact matches, look for other direct matches
+    other_matches = []
     for player in players_data:
         player_name_normalized = normalize_name(player['name'])
         
-        # Check for various match types
-        exact_match = player_name_normalized == text_normalized
+        # Substring matches
         name_contains_query = text_normalized in player_name_normalized
         query_contains_name = player_name_normalized in text_normalized
         
-        # 🔧 FIXED: Much stricter lastname matching using word boundaries
-        lastname_match = False
-        name_parts = player_name_normalized.split()
-        if len(name_parts) >= 2:
-            lastname = name_parts[-1]
-            # Use word boundaries to prevent "ken" matching "skenes"
-            lastname_pattern = f"\\b{re.escape(lastname)}\\b"
-            lastname_match = bool(re.search(lastname_pattern, text_normalized))
+        # Only allow meaningful substring matches (not just first name)
+        is_meaningful_substring = False
+        if name_contains_query or query_contains_name:
+            query_words = text_normalized.split()
+            player_words = player_name_normalized.split()
+            
+            # Meaningful if query has multiple words OR matches complete word
+            if len(query_words) > 1:
+                is_meaningful_substring = True
+            elif len(query_words) == 1 and query_words[0] in player_words:
+                is_meaningful_substring = True
         
-        # 🔧 FIXED: Much stricter firstname matching using word boundaries
-        firstname_match = False
-        if len(name_parts) >= 1:
-            firstname = name_parts[0]
-            # Use word boundaries and require minimum length
-            if len(firstname) >= 4:  # Don't match very short first names
-                firstname_pattern = f"\\b{re.escape(firstname)}\\b"
-                firstname_match = bool(re.search(firstname_pattern, text_normalized))
+        if is_meaningful_substring:
+            log_info(f"SUBSTRING MATCH: '{text_normalized}' → {player['name']} ({player['team']})")
+            other_matches.append(player)
+            continue
         
-        if exact_match or name_contains_query or query_contains_name or lastname_match or firstname_match:
-            print(f"🔧 DIRECT MATCH FOUND: '{text_normalized}' → {player['name']} ({player['team']})")
-            print(f"    exact:{exact_match} name_contains:{name_contains_query} query_contains:{query_contains_name}")
-            print(f"    lastname:{lastname_match} firstname:{firstname_match}")
-            direct_matches.append(player)
+        # Lastname matching (only for single-word queries)
+        query_words = text_normalized.split()
+        if len(query_words) == 1:
+            name_parts = player_name_normalized.split()
+            if len(name_parts) >= 2:
+                lastname = name_parts[-1]
+                lastname_pattern = f"\\b{re.escape(lastname)}\\b"
+                lastname_match = bool(re.search(lastname_pattern, text_normalized))
+                
+                if lastname_match:
+                    log_info(f"LASTNAME MATCH: '{text_normalized}' → {player['name']} ({player['team']})")
+                    other_matches.append(player)
     
-    print(f"🔧 DIRECT MATCHES DEBUG: Found {len(direct_matches)} total direct matches")
-    
-    # Deduplicate direct matches
-    if direct_matches:
+    # If we found other direct matches, return those
+    if other_matches:
+        log_info(f"OTHER MATCHES: Found {len(other_matches)} non-exact direct matches")
+        
+        # Deduplicate other matches
         seen_players = set()
-        unique_direct = []
-        for player in direct_matches:
+        unique_other = []
+        for player in other_matches:
             player_key = f"{normalize_name(player['name'])}|{normalize_name(player['team'])}"
             if player_key not in seen_players:
-                unique_direct.append(player)
+                unique_other.append(player)
                 seen_players.add(player_key)
-                print(f"🔧 DIRECT UNIQUE: Added {player['name']} ({player['team']})")
-            else:
-                print(f"🔧 DIRECT DUPLICATE: Skipped {player['name']} ({player['team']})")
+                log_info(f"OTHER UNIQUE: Added {player['name']} ({player['team']})")
         
-        print(f"🔧 DIRECT FINAL: Returning {len(unique_direct)} unique direct matches")
-        
-        if unique_direct:
-            duration_ms = int((datetime.now() - start_time).total_seconds() * 1000)
-            asyncio.create_task(log_analytics("Player Search",
-                question=text, duration_ms=duration_ms, players_checked=len(players_data),
-                matches_found=len(unique_direct), players_found=unique_direct, search_type="direct_match"
-            ))
-            return unique_direct
+        duration_ms = int((datetime.now() - start_time).total_seconds() * 1000)
+        asyncio.create_task(log_analytics("Player Search",
+            question=text, duration_ms=duration_ms, players_checked=len(players_data),
+            matches_found=len(unique_other), players_found=unique_other, search_type="direct_match"
+        ))
+        return unique_other
     
-    print(f"🔧 DIRECT MATCH: No direct matches found, falling back to fuzzy matching")
+    log_info(f"DIRECT MATCH: No direct matches found, falling back to fuzzy matching")
     
-    # Fuzzy matching
+    # STEP 3: Fuzzy matching as final fallback
     matches = fuzzy_match_players(text, max_results=5)
     duration_ms = int((datetime.now() - start_time).total_seconds() * 1000)
     

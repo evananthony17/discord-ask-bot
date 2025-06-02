@@ -16,29 +16,46 @@ def clean_message_content_for_scanning(message_content, message_author_name):
     content_normalized = normalize_name(message_content)
     author_normalized = normalize_name(message_author_name)
     
-    # Common bot message patterns that include usernames
-    username_patterns = [
-        f"**{re.escape(author_normalized)}** asked:",
-        f"**{re.escape(author_normalized)}**:",
-        f"{re.escape(author_normalized)} asked:",
-        f"{re.escape(author_normalized)}:",
-        # Handle potential variations
-        f"**{re.escape(author_normalized.replace(' ', ''))}** asked:",
-        f"**{re.escape(author_normalized.replace(' ', ''))}**:",
-    ]
+    # 🔧 FIXED: Add safety checks to prevent regex errors
+    if not author_normalized or len(author_normalized.strip()) == 0:
+        return content_normalized
     
-    # Remove username patterns from the content
-    cleaned_content = content_normalized
-    for pattern in username_patterns:
-        cleaned_content = re.sub(pattern, "", cleaned_content, flags=re.IGNORECASE)
-    
-    # Also remove just the raw username if it appears
-    cleaned_content = re.sub(f"\\b{re.escape(author_normalized)}\\b", "", cleaned_content, flags=re.IGNORECASE)
-    
-    # Clean up extra whitespace
-    cleaned_content = re.sub(r'\s+', ' ', cleaned_content).strip()
-    
-    return cleaned_content
+    try:
+        # Common bot message patterns that include usernames
+        username_patterns = [
+            f"**{re.escape(author_normalized)}** asked:",
+            f"**{re.escape(author_normalized)}**:",
+            f"{re.escape(author_normalized)} asked:",
+            f"{re.escape(author_normalized)}:",
+            # Handle potential variations
+            f"**{re.escape(author_normalized.replace(' ', ''))}** asked:",
+            f"**{re.escape(author_normalized.replace(' ', ''))}**:",
+        ]
+        
+        # Remove username patterns from the content
+        cleaned_content = content_normalized
+        for pattern in username_patterns:
+            try:
+                cleaned_content = re.sub(pattern, "", cleaned_content, flags=re.IGNORECASE)
+            except re.error as e:
+                log_error(f"REGEX ERROR in username pattern: {e} - Pattern: {pattern}")
+                continue
+        
+        # Also remove just the raw username if it appears
+        if len(author_normalized) > 0:
+            try:
+                cleaned_content = re.sub(f"\\b{re.escape(author_normalized)}\\b", "", cleaned_content, flags=re.IGNORECASE)
+            except re.error as e:
+                log_error(f"REGEX ERROR in raw username removal: {e} - Username: {author_normalized}")
+        
+        # Clean up extra whitespace
+        cleaned_content = re.sub(r'\s+', ' ', cleaned_content).strip()
+        
+        return cleaned_content
+        
+    except Exception as e:
+        log_error(f"ERROR in clean_message_content_for_scanning: {e}")
+        return content_normalized  # Return original if cleaning fails
 
 def check_player_mention_hierarchical(player_name_normalized, player_uuid, message_normalized, message_content, message_author_name=None):
     """
@@ -46,71 +63,88 @@ def check_player_mention_hierarchical(player_name_normalized, player_uuid, messa
     Returns: (is_match, match_type, confidence_score)
     """
     
-    # 🔧 NEW: Clean the message content to remove username false positives
-    if message_author_name:
-        scanning_content = clean_message_content_for_scanning(message_content, message_author_name)
-        scanning_normalized = normalize_name(scanning_content)
-        log_info(f"🔧 USERNAME FILTER: Original: '{message_normalized[:100]}...'")
-        log_info(f"🔧 USERNAME FILTER: Cleaned: '{scanning_normalized[:100]}...'")
-        log_info(f"🔧 USERNAME FILTER: Removed username: '{normalize_name(message_author_name)}'")
-    else:
+    # 🔧 FIXED: Add error handling for username filtering
+    try:
+        if message_author_name:
+            scanning_content = clean_message_content_for_scanning(message_content, message_author_name)
+            scanning_normalized = normalize_name(scanning_content)
+            log_info(f"🔧 USERNAME FILTER: Original: '{message_normalized[:100]}...'")
+            log_info(f"🔧 USERNAME FILTER: Cleaned: '{scanning_normalized[:100]}...'")
+            log_info(f"🔧 USERNAME FILTER: Removed username: '{normalize_name(message_author_name)}'")
+        else:
+            scanning_normalized = message_normalized
+    except Exception as e:
+        log_error(f"ERROR in username filtering: {e}")
         scanning_normalized = message_normalized
     
-    # LEVEL 1: EXACT full name match (highest confidence = 1.0)
-    exact_pattern = f"\\b{re.escape(player_name_normalized)}\\b"
-    if re.search(exact_pattern, scanning_normalized):
-        return True, "exact_full_name", 1.0
-    
-    # LEVEL 2: Full name in [Players: ...] list (high confidence = 0.9)
-    players_section_pattern = r'\[players:(.*?)\]'
-    players_match = re.search(players_section_pattern, scanning_normalized, re.IGNORECASE)
-    if players_match:
-        players_text = players_match.group(1)
-        player_in_list_pattern = f"\\b{re.escape(player_name_normalized)}\\b"
-        if re.search(player_in_list_pattern, players_text):
-            return True, "players_list", 0.9
-    
-    # LEVEL 3: Last name with team context validation (medium confidence = 0.7)
-    if ' ' in player_name_normalized:
-        lastname = player_name_normalized.split()[-1]
-        lastname_pattern = f"\\b{re.escape(lastname)}\\b"
-        if re.search(lastname_pattern, scanning_normalized):
-            # Context validation: check if this looks like a baseball context
-            if validate_baseball_context(scanning_normalized, lastname):
-                return True, "lastname_with_context", 0.7
-    
-    # LEVEL 4: First name with additional validation (lower confidence = 0.6)
-    if ' ' in player_name_normalized:
-        firstname = player_name_normalized.split()[0]
-        # Only for distinctive first names (length >= 5 to avoid common names like "mike", "john")
-        if len(firstname) >= 5:
-            firstname_pattern = f"\\b{re.escape(firstname)}\\b"
-            if re.search(firstname_pattern, scanning_normalized):
-                if validate_baseball_context(scanning_normalized, firstname):
-                    return True, "firstname_with_context", 0.6
-    
-    # LEVEL 5: No match
-    return False, "no_match", 0.0
+    try:
+        # LEVEL 1: EXACT full name match (highest confidence = 1.0)
+        exact_pattern = f"\\b{re.escape(player_name_normalized)}\\b"
+        if re.search(exact_pattern, scanning_normalized):
+            return True, "exact_full_name", 1.0
+        
+        # LEVEL 2: Full name in [Players: ...] list (high confidence = 0.9)
+        players_section_pattern = r'\[players:(.*?)\]'
+        players_match = re.search(players_section_pattern, scanning_normalized, re.IGNORECASE)
+        if players_match:
+            players_text = players_match.group(1)
+            player_in_list_pattern = f"\\b{re.escape(player_name_normalized)}\\b"
+            if re.search(player_in_list_pattern, players_text):
+                return True, "players_list", 0.9
+        
+        # LEVEL 3: Last name with team context validation (medium confidence = 0.7)
+        if ' ' in player_name_normalized:
+            lastname = player_name_normalized.split()[-1]
+            lastname_pattern = f"\\b{re.escape(lastname)}\\b"
+            if re.search(lastname_pattern, scanning_normalized):
+                # Context validation: check if this looks like a baseball context
+                if validate_baseball_context(scanning_normalized, lastname):
+                    return True, "lastname_with_context", 0.7
+        
+        # LEVEL 4: First name with additional validation (lower confidence = 0.6)
+        if ' ' in player_name_normalized:
+            firstname = player_name_normalized.split()[0]
+            # Only for distinctive first names (length >= 5 to avoid common names like "mike", "john")
+            if len(firstname) >= 5:
+                firstname_pattern = f"\\b{re.escape(firstname)}\\b"
+                if re.search(firstname_pattern, scanning_normalized):
+                    if validate_baseball_context(scanning_normalized, firstname):
+                        return True, "firstname_with_context", 0.6
+        
+        # LEVEL 5: No match
+        return False, "no_match", 0.0
+        
+    except re.error as e:
+        log_error(f"REGEX ERROR in hierarchical matching for player '{player_name_normalized}': {e}")
+        return False, "regex_error", 0.0
+    except Exception as e:
+        log_error(f"ERROR in hierarchical matching for player '{player_name_normalized}': {e}")
+        return False, "error", 0.0
 
 def validate_baseball_context(message_normalized, name_part):
     """
     Validate that this appears to be a baseball context to reduce false positives
     """
-    # Baseball context indicators
-    baseball_keywords = {
-        'asked', 'player', 'team', 'stats', 'overall', 'projection', 'update',
-        'hitting', 'pitching', 'batting', 'era', 'whip', 'ops', 'avg', 'home',
-        'runs', 'rbi', 'steals', 'wins', 'saves', 'strikeouts', 'walk',
-        'mlb', 'baseball', 'season', 'game', 'fantasy', 'roster', 'lineup',
-        'trade', 'waiver', 'draft', 'prospect', 'rookie', 'veteran'
-    }
-    
-    # Check if the message contains baseball-related terms
-    words_in_message = set(message_normalized.split())
-    baseball_context_count = len(words_in_message.intersection(baseball_keywords))
-    
-    # Require at least 2 baseball context words for lastname/firstname matches
-    return baseball_context_count >= 2
+    try:
+        # Baseball context indicators
+        baseball_keywords = {
+            'asked', 'player', 'team', 'stats', 'overall', 'projection', 'update',
+            'hitting', 'pitching', 'batting', 'era', 'whip', 'ops', 'avg', 'home',
+            'runs', 'rbi', 'steals', 'wins', 'saves', 'strikeouts', 'walk',
+            'mlb', 'baseball', 'season', 'game', 'fantasy', 'roster', 'lineup',
+            'trade', 'waiver', 'draft', 'prospect', 'rookie', 'veteran'
+        }
+        
+        # Check if the message contains baseball-related terms
+        words_in_message = set(message_normalized.split())
+        baseball_context_count = len(words_in_message.intersection(baseball_keywords))
+        
+        # Require at least 2 baseball context words for lastname/firstname matches
+        return baseball_context_count >= 2
+        
+    except Exception as e:
+        log_error(f"ERROR in validate_baseball_context: {e}")
+        return False
 
 # -------- RECENT MENTIONS CHECKING --------
 
@@ -155,27 +189,32 @@ async def check_recent_player_mentions(guild, players_to_check):
                             log_info(f"🔧 LINDOR DEBUG: Normalized: '{message_normalized[:200]}...'")
                             log_info(f"🔧 LINDOR DEBUG: Looking for: '{player_name_normalized}' or '{player_uuid[:8]}'")
                         
-                        # 🔧 NEW: Use hierarchical matching approach with username filtering
-                        is_match, match_type, confidence = check_player_mention_hierarchical(
-                            player_name_normalized, player_uuid, message_normalized, message.content, 
-                            message_author_name=message.author.display_name
-                        )
-                        
-                        if is_match:
-                            log_info(f"RECENT MENTION CHECK: Found {player['name']} in bot message in answering channel ({match_type}, confidence: {confidence})")
-                            log_info(f"RECENT MENTION CHECK: Match details - player_normalized: '{player_name_normalized}', message_snippet: '{message_normalized[:100]}...'")
-                            found_in_answering = True
-                            answering_message_url = message.jump_url  # 🔧 CAPTURE THE MESSAGE URL
+                        # 🔧 FIXED: Add error handling for hierarchical matching
+                        try:
+                            is_match, match_type, confidence = check_player_mention_hierarchical(
+                                player_name_normalized, player_uuid, message_normalized, message.content, 
+                                message_author_name=message.author.display_name
+                            )
                             
-                            # BYPASS WEBHOOK - Direct Discord message for debugging
-                            try:
-                                logs_channel = discord.utils.get(guild.text_channels, name="bernie-stock-logs")
-                                if logs_channel:
-                                    await logs_channel.send(f"🔧 **DEBUG**: found_in_answering = True for {player['name']}")
-                            except:
-                                pass  # Don't let debug messages break the bot
+                            if is_match:
+                                log_info(f"RECENT MENTION CHECK: Found {player['name']} in bot message in answering channel ({match_type}, confidence: {confidence})")
+                                log_info(f"RECENT MENTION CHECK: Match details - player_normalized: '{player_name_normalized}', message_snippet: '{message_normalized[:100]}...'")
+                                found_in_answering = True
+                                answering_message_url = message.jump_url  # 🔧 CAPTURE THE MESSAGE URL
+                                
+                                # BYPASS WEBHOOK - Direct Discord message for debugging
+                                try:
+                                    logs_channel = discord.utils.get(guild.text_channels, name="bernie-stock-logs")
+                                    if logs_channel:
+                                        await logs_channel.send(f"🔧 **DEBUG**: found_in_answering = True for {player['name']}")
+                                except:
+                                    pass  # Don't let debug messages break the bot
+                                
+                                break
+                        except Exception as e:
+                            log_error(f"ERROR in hierarchical matching for message in answering channel: {e}")
+                            continue
                             
-                            break
                 log_info(f"RECENT MENTION CHECK: Checked {message_count} messages in answering channel")
             except Exception as e:
                 log_error(f"RECENT MENTION CHECK: Error checking answering channel: {e}")
@@ -197,27 +236,32 @@ async def check_recent_player_mentions(guild, players_to_check):
                         if message.author == guild.me:  # guild.me is the bot
                             message_normalized = normalize_name(message.content)
                             
-                            # 🔧 NEW: Use hierarchical matching approach with username filtering
-                            is_match, match_type, confidence = check_player_mention_hierarchical(
-                                player_name_normalized, player_uuid, message_normalized, message.content,
-                                message_author_name=message.author.display_name
-                            )
-                            
-                            if is_match:
-                                log_info(f"RECENT MENTION CHECK: Found {player['name']} in bot message in final channel ({match_type}, confidence: {confidence})")
-                                log_info(f"RECENT MENTION CHECK: Match details - player_normalized: '{player_name_normalized}', message_snippet: '{message_normalized[:100]}...'")
-                                found_in_final = True
-                                answer_message_url = message.jump_url  # 🔧 CAPTURE THE ANSWER MESSAGE URL
+                            # 🔧 FIXED: Add error handling for hierarchical matching
+                            try:
+                                is_match, match_type, confidence = check_player_mention_hierarchical(
+                                    player_name_normalized, player_uuid, message_normalized, message.content,
+                                    message_author_name=message.author.display_name
+                                )
                                 
-                                # BYPASS WEBHOOK - Direct Discord message for debugging
-                                try:
-                                    logs_channel = discord.utils.get(guild.text_channels, name="bernie-stock-logs")
-                                    if logs_channel:
-                                        await logs_channel.send(f"🔧 **DEBUG**: found_in_final = True for {player['name']}")
-                                except:
-                                    pass  # Don't let debug messages break the bot
+                                if is_match:
+                                    log_info(f"RECENT MENTION CHECK: Found {player['name']} in bot message in final channel ({match_type}, confidence: {confidence})")
+                                    log_info(f"RECENT MENTION CHECK: Match details - player_normalized: '{player_name_normalized}', message_snippet: '{message_normalized[:100]}...'")
+                                    found_in_final = True
+                                    answer_message_url = message.jump_url  # 🔧 CAPTURE THE ANSWER MESSAGE URL
+                                    
+                                    # BYPASS WEBHOOK - Direct Discord message for debugging
+                                    try:
+                                        logs_channel = discord.utils.get(guild.text_channels, name="bernie-stock-logs")
+                                        if logs_channel:
+                                            await logs_channel.send(f"🔧 **DEBUG**: found_in_final = True for {player['name']}")
+                                    except:
+                                        pass  # Don't let debug messages break the bot
+                                    
+                                    break
+                            except Exception as e:
+                                log_error(f"ERROR in hierarchical matching for message in final channel: {e}")
+                                continue
                                 
-                                break
                     log_info(f"RECENT MENTION CHECK: Checked {message_count} messages in final channel")
                 except Exception as e:
                     log_error(f"RECENT MENTION CHECK: Error checking final channel: {e}")
