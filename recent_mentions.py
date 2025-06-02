@@ -5,6 +5,70 @@ from config import FINAL_ANSWER_CHANNEL, ANSWERING_CHANNEL, RECENT_MENTION_HOURS
 from utils import normalize_name
 from logging_system import log_error, log_info
 
+# -------- HIERARCHICAL MATCHING FUNCTIONS --------
+
+def check_player_mention_hierarchical(player_name_normalized, player_uuid, message_normalized, message_content):
+    """
+    Hierarchical matching from most specific to least specific
+    Returns: (is_match, match_type, confidence_score)
+    """
+    
+    # LEVEL 1: EXACT full name match (highest confidence = 1.0)
+    exact_pattern = f"\\b{re.escape(player_name_normalized)}\\b"
+    if re.search(exact_pattern, message_normalized):
+        return True, "exact_full_name", 1.0
+    
+    # LEVEL 2: Full name in [Players: ...] list (high confidence = 0.9)
+    players_section_pattern = r'\[players:(.*?)\]'
+    players_match = re.search(players_section_pattern, message_normalized, re.IGNORECASE)
+    if players_match:
+        players_text = players_match.group(1)
+        player_in_list_pattern = f"\\b{re.escape(player_name_normalized)}\\b"
+        if re.search(player_in_list_pattern, players_text):
+            return True, "players_list", 0.9
+    
+    # LEVEL 3: Last name with team context validation (medium confidence = 0.7)
+    if ' ' in player_name_normalized:
+        lastname = player_name_normalized.split()[-1]
+        lastname_pattern = f"\\b{re.escape(lastname)}\\b"
+        if re.search(lastname_pattern, message_normalized):
+            # Context validation: check if this looks like a baseball context
+            if validate_baseball_context(message_normalized, lastname):
+                return True, "lastname_with_context", 0.7
+    
+    # LEVEL 4: First name with additional validation (lower confidence = 0.6)
+    if ' ' in player_name_normalized:
+        firstname = player_name_normalized.split()[0]
+        # Only for distinctive first names (length >= 5 to avoid common names like "mike", "john")
+        if len(firstname) >= 5:
+            firstname_pattern = f"\\b{re.escape(firstname)}\\b"
+            if re.search(firstname_pattern, message_normalized):
+                if validate_baseball_context(message_normalized, firstname):
+                    return True, "firstname_with_context", 0.6
+    
+    # LEVEL 5: No match
+    return False, "no_match", 0.0
+
+def validate_baseball_context(message_normalized, name_part):
+    """
+    Validate that this appears to be a baseball context to reduce false positives
+    """
+    # Baseball context indicators
+    baseball_keywords = {
+        'asked', 'player', 'team', 'stats', 'overall', 'projection', 'update',
+        'hitting', 'pitching', 'batting', 'era', 'whip', 'ops', 'avg', 'home',
+        'runs', 'rbi', 'steals', 'wins', 'saves', 'strikeouts', 'walk',
+        'mlb', 'baseball', 'season', 'game', 'fantasy', 'roster', 'lineup',
+        'trade', 'waiver', 'draft', 'prospect', 'rookie', 'veteran'
+    }
+    
+    # Check if the message contains baseball-related terms
+    words_in_message = set(message_normalized.split())
+    baseball_context_count = len(words_in_message.intersection(baseball_keywords))
+    
+    # Require at least 2 baseball context words for lastname/firstname matches
+    return baseball_context_count >= 2
+
 # -------- RECENT MENTIONS CHECKING --------
 
 async def check_recent_player_mentions(guild, players_to_check):
@@ -41,12 +105,21 @@ async def check_recent_player_mentions(guild, players_to_check):
                     # Only check messages from the bot itself
                     if message.author == guild.me:  # guild.me is the bot
                         message_normalized = normalize_name(message.content)
-                        # Fix multiline regex pattern
-                        pattern = f"\\b{re.escape(player_name_normalized)}"
-                        if (re.search(pattern, message_normalized) or player_uuid in message_normalized):
-                            log_info(f"RECENT MENTION CHECK: Found {player['name']} in bot message in answering channel")
-                            log_info(f"RECENT MENTION CHECK: Match details - player_normalized: '{player_name_normalized}', message_snippet: '{message_normalized[:100]}...', uuid: '{player_uuid[:8]}'")
-                            log_info(f"RECENT MENTION CHECK: Message content snippet: '{message.content[:100]}...'")
+                        
+                        # 🔧 ENHANCED DEBUG: Log each message content for Francisco Lindor
+                        if 'francisco' in player_name_normalized.lower() or 'lindor' in player_name_normalized.lower():
+                            log_info(f"🔧 LINDOR DEBUG: Checking bot message: '{message.content[:200]}...'")
+                            log_info(f"🔧 LINDOR DEBUG: Normalized: '{message_normalized[:200]}...'")
+                            log_info(f"🔧 LINDOR DEBUG: Looking for: '{player_name_normalized}' or '{player_uuid[:8]}'")
+                        
+                        # 🔧 NEW: Use hierarchical matching approach
+                        is_match, match_type, confidence = check_player_mention_hierarchical(
+                            player_name_normalized, player_uuid, message_normalized, message.content
+                        )
+                        
+                        if is_match:
+                            log_info(f"RECENT MENTION CHECK: Found {player['name']} in bot message in answering channel ({match_type}, confidence: {confidence})")
+                            log_info(f"RECENT MENTION CHECK: Match details - player_normalized: '{player_name_normalized}', message_snippet: '{message_normalized[:100]}...'")
                             found_in_answering = True
                             answering_message_url = message.jump_url  # 🔧 CAPTURE THE MESSAGE URL
                             
@@ -79,12 +152,15 @@ async def check_recent_player_mentions(guild, players_to_check):
                         # Only check messages from the bot itself
                         if message.author == guild.me:  # guild.me is the bot
                             message_normalized = normalize_name(message.content)
-                            # Fix multiline regex pattern  
-                            pattern = f"\\b{re.escape(player_name_normalized)}"
-                            if (re.search(pattern, message_normalized) or player_uuid in message_normalized):
-                                log_info(f"RECENT MENTION CHECK: Found {player['name']} in bot message in final channel")
-                                log_info(f"RECENT MENTION CHECK: Match details - player_normalized: '{player_name_normalized}', message_snippet: '{message_normalized[:100]}...', uuid: '{player_uuid[:8]}'")
-                                log_info(f"RECENT MENTION CHECK: Message content snippet: '{message.content[:100]}...'")
+                            
+                            # 🔧 NEW: Use hierarchical matching approach
+                            is_match, match_type, confidence = check_player_mention_hierarchical(
+                                player_name_normalized, player_uuid, message_normalized, message.content
+                            )
+                            
+                            if is_match:
+                                log_info(f"RECENT MENTION CHECK: Found {player['name']} in bot message in final channel ({match_type}, confidence: {confidence})")
+                                log_info(f"RECENT MENTION CHECK: Match details - player_normalized: '{player_name_normalized}', message_snippet: '{message_normalized[:100]}...'")
                                 found_in_final = True
                                 answer_message_url = message.jump_url  # 🔧 CAPTURE THE ANSWER MESSAGE URL
                                 
