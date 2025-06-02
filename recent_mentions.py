@@ -23,14 +23,14 @@ def clean_message_content_for_scanning(message_content, message_author_name):
     try:
         # Common bot message patterns that include usernames
         username_patterns = [
-            f"**{re.escape(author_normalized)}** asked:",
-            f"**{re.escape(author_normalized)}**:",
+            f"\\*\\*{re.escape(author_normalized)}\\*\\* asked:",
+            f"\\*\\*{re.escape(author_normalized)}\\*\\*:",
             f"{re.escape(author_normalized)} asked:",
             f"{re.escape(author_normalized)}:",
             # Handle potential variations
-            f"**{re.escape(author_normalized.replace(' ', ''))}** asked:",
-            f"**{re.escape(author_normalized.replace(' ', ''))}**:",
-        ]
+            f"\\*\\*{re.escape(author_normalized.replace(' ', ''))}\\*\\* asked:",
+            f"\\*\\*{re.escape(author_normalized.replace(' ', ''))}\\*\\*:",
+]
         
         # Remove username patterns from the content
         cleaned_content = content_normalized

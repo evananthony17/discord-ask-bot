@@ -191,70 +191,85 @@ def is_likely_player_request(text):
             log_info(f"PLAYER REQUEST: Blocked query '{text}' - matched casual pattern: {pattern}")
             return False
     
-    # 🔧 NEW: Check for question words without proper names
+    # 🔧 FIXED: Check for potential player names in the database
+    potential_player_words = []
+    for word in words:
+        if word not in blocked_words and len(word) >= 4:
+            # Check if this word could be part of a player name
+            for player in players_data:
+                player_name_normalized = normalize_name(player['name']).lower()
+                if word.lower() in player_name_normalized.split():
+                    potential_player_words.append(word)
+                    break
+    
+    # If we found potential player words, allow the request
+    if potential_player_words:
+        log_info(f"PLAYER REQUEST: Approved query '{text}' - found potential player words: {potential_player_words}")
+        return True
+    
+    # 🔧 FALLBACK: Check for question words without proper names (original logic but more lenient)
     question_words = {'what', 'when', 'where', 'why', 'how', 'who', 'which'}
     if any(word in question_words for word in words):
-        # If it's a question, require it to have at least one capitalized word (proper name)
+        # If it's a question, require it to have at least one word that could be a name (4+ letters)
         original_words = text.split()
-        has_proper_name = any(
-            len(word.strip('.,!?')) >= 5 and word.strip('.,!?')[0].isupper()
+        has_name_like_word = any(
+            len(word.strip('.,!?')) >= 4 and word.strip('.,!?').isalpha()
             for word in original_words
         )
-        if not has_proper_name:
-            log_info(f"PLAYER REQUEST: Blocked question '{text}' - no proper names found")
+        if not has_name_like_word:
+            log_info(f"PLAYER REQUEST: Blocked question '{text}' - no name-like words found")
             return False
     
     # If it's a short question with no obvious player name indicators, probably casual
     if '?' in text and len(words) <= 3:
         original_words = text.split()
         name_like = any(
-            len(word.strip('.,!?')) >= 5 and word.strip('.,!?')[0].isupper()
+            len(word.strip('.,!?')) >= 4 and word.strip('.,!?').isalpha()
             for word in original_words
         )
         if not name_like:
             log_info(f"PLAYER REQUEST: Blocked short question '{text}' - no name-like words")
             return False
     
-    # 🔧 NEW: Additional validation for multi-word queries
+    # 🔧 ENHANCED: Additional validation for multi-word queries
     if len(words) >= 2:
-        # Check if it contains baseball context OR proper name structure
+        # Check if it contains baseball context OR has potential player names
         baseball_indicators = {
             'player', 'pitcher', 'batter', 'team', 'mlb', 'baseball', 'stats', 
             'era', 'rbi', 'batting', 'home', 'run', 'runs', 'hitting', 'pitching',
             'fantasy', 'roster', 'lineup', 'trade', 'waiver', 'draft', 'update',
-            'projection', 'overall', 'season', 'game'
+            'projection', 'overall', 'season', 'game', 'hurt', 'injured', 'injury'
         }
         
         has_baseball_context = any(word in baseball_indicators for word in words)
         
-        # Check for proper name structure (at least one capitalized word of reasonable length)
-        original_words = text.split()
-        has_proper_name_structure = any(
-            len(word.strip('.,!?')) >= 4 and word.strip('.,!?')[0].isupper()
-            for word in original_words
-        )
+        # If we already found potential player words above, we're good
+        if potential_player_words:
+            log_info(f"PLAYER REQUEST: Approved multi-word query '{text}' - contains potential player names")
+            return True
         
-        if not (has_baseball_context or has_proper_name_structure):
-            log_info(f"PLAYER REQUEST: Blocked multi-word query '{text}' - no baseball context or proper names")
-            return False
+        # If no player words but has baseball context, still allow
+        if has_baseball_context:
+            log_info(f"PLAYER REQUEST: Approved multi-word query '{text}' - contains baseball context")
+            return True
+        
+        # Check for name-like word structure (4+ letter words that could be names)
+        original_words = text.split()
+        name_like_words = [
+            word.strip('.,!?') for word in original_words 
+            if len(word.strip('.,!?')) >= 4 and word.strip('.,!?').isalpha()
+            and word.strip('.,!?').lower() not in blocked_words
+        ]
+        
+        if len(name_like_words) >= 1:
+            log_info(f"PLAYER REQUEST: Approved multi-word query '{text}' - contains name-like words: {name_like_words}")
+            return True
+        
+        log_info(f"PLAYER REQUEST: Blocked multi-word query '{text}' - no baseball context, player names, or name-like words")
+        return False
     
     log_info(f"PLAYER REQUEST: Approved query '{text}' - passed all filters")
     return True
-
-# -------- TIME FORMATTING --------
-
-def format_time_ago(time_delta):
-    """Format a timedelta object into a human-readable string"""
-    if time_delta.days > 0:
-        return f"{time_delta.days} day{'s' if time_delta.days > 1 else ''}"
-    elif time_delta.seconds > 3600:
-        hours = time_delta.seconds // 3600
-        return f"{hours} hour{'s' if hours > 1 else ''}"
-    elif time_delta.seconds > 60:
-        minutes = time_delta.seconds // 60
-        return f"{minutes} minute{'s' if minutes > 1 else ''}"
-    else:
-        return "just now"
 
 # -------- FILE LOADING --------
 
