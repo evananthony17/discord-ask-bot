@@ -7,20 +7,63 @@ from logging_system import log_error, log_info
 
 # -------- HIERARCHICAL MATCHING FUNCTIONS --------
 
-def check_player_mention_hierarchical(player_name_normalized, player_uuid, message_normalized, message_content):
+def clean_message_content_for_scanning(message_content, message_author_name):
+    """
+    Remove username from message content to prevent false positives
+    when scanning for player mentions
+    """
+    # Normalize both for consistent matching
+    content_normalized = normalize_name(message_content)
+    author_normalized = normalize_name(message_author_name)
+    
+    # Common bot message patterns that include usernames
+    username_patterns = [
+        f"**{re.escape(author_normalized)}** asked:",
+        f"**{re.escape(author_normalized)}**:",
+        f"{re.escape(author_normalized)} asked:",
+        f"{re.escape(author_normalized)}:",
+        # Handle potential variations
+        f"**{re.escape(author_normalized.replace(' ', ''))}** asked:",
+        f"**{re.escape(author_normalized.replace(' ', ''))}**:",
+    ]
+    
+    # Remove username patterns from the content
+    cleaned_content = content_normalized
+    for pattern in username_patterns:
+        cleaned_content = re.sub(pattern, "", cleaned_content, flags=re.IGNORECASE)
+    
+    # Also remove just the raw username if it appears
+    cleaned_content = re.sub(f"\\b{re.escape(author_normalized)}\\b", "", cleaned_content, flags=re.IGNORECASE)
+    
+    # Clean up extra whitespace
+    cleaned_content = re.sub(r'\s+', ' ', cleaned_content).strip()
+    
+    return cleaned_content
+
+def check_player_mention_hierarchical(player_name_normalized, player_uuid, message_normalized, message_content, message_author_name=None):
     """
     Hierarchical matching from most specific to least specific
     Returns: (is_match, match_type, confidence_score)
     """
     
+    # 🔧 NEW: Clean the message content to remove username false positives
+    if message_author_name:
+        scanning_content = clean_message_content_for_scanning(message_content, message_author_name)
+        scanning_normalized = normalize_name(scanning_content)
+        log_info(f"🔧 USERNAME FILTER: Original: '{message_normalized[:100]}...'")
+        log_info(f"🔧 USERNAME FILTER: Cleaned: '{scanning_normalized[:100]}...'")
+        log_info(f"🔧 USERNAME FILTER: Removed username: '{normalize_name(message_author_name)}'")
+    else:
+        scanning_normalized = message_normalized
+    
     # LEVEL 1: EXACT full name match (highest confidence = 1.0)
     exact_pattern = f"\\b{re.escape(player_name_normalized)}\\b"
-    if re.search(exact_pattern, message_normalized):
+    if re.search(exact_pattern, scanning_normalized):
         return True, "exact_full_name", 1.0
     
     # LEVEL 2: Full name in [Players: ...] list (high confidence = 0.9)
     players_section_pattern = r'\[players:(.*?)\]'
-    players_match = re.search(players_section_pattern, message_normalized, re.IGNORECASE)
+    players_match = re.search(players_section_pattern, scanning_normalized, re.IGNORECASE)
     if players_match:
         players_text = players_match.group(1)
         player_in_list_pattern = f"\\b{re.escape(player_name_normalized)}\\b"
@@ -31,9 +74,9 @@ def check_player_mention_hierarchical(player_name_normalized, player_uuid, messa
     if ' ' in player_name_normalized:
         lastname = player_name_normalized.split()[-1]
         lastname_pattern = f"\\b{re.escape(lastname)}\\b"
-        if re.search(lastname_pattern, message_normalized):
+        if re.search(lastname_pattern, scanning_normalized):
             # Context validation: check if this looks like a baseball context
-            if validate_baseball_context(message_normalized, lastname):
+            if validate_baseball_context(scanning_normalized, lastname):
                 return True, "lastname_with_context", 0.7
     
     # LEVEL 4: First name with additional validation (lower confidence = 0.6)
@@ -42,8 +85,8 @@ def check_player_mention_hierarchical(player_name_normalized, player_uuid, messa
         # Only for distinctive first names (length >= 5 to avoid common names like "mike", "john")
         if len(firstname) >= 5:
             firstname_pattern = f"\\b{re.escape(firstname)}\\b"
-            if re.search(firstname_pattern, message_normalized):
-                if validate_baseball_context(message_normalized, firstname):
+            if re.search(firstname_pattern, scanning_normalized):
+                if validate_baseball_context(scanning_normalized, firstname):
                     return True, "firstname_with_context", 0.6
     
     # LEVEL 5: No match
@@ -112,9 +155,10 @@ async def check_recent_player_mentions(guild, players_to_check):
                             log_info(f"🔧 LINDOR DEBUG: Normalized: '{message_normalized[:200]}...'")
                             log_info(f"🔧 LINDOR DEBUG: Looking for: '{player_name_normalized}' or '{player_uuid[:8]}'")
                         
-                        # 🔧 NEW: Use hierarchical matching approach
+                        # 🔧 NEW: Use hierarchical matching approach with username filtering
                         is_match, match_type, confidence = check_player_mention_hierarchical(
-                            player_name_normalized, player_uuid, message_normalized, message.content
+                            player_name_normalized, player_uuid, message_normalized, message.content, 
+                            message_author_name=message.author.display_name
                         )
                         
                         if is_match:
@@ -153,9 +197,10 @@ async def check_recent_player_mentions(guild, players_to_check):
                         if message.author == guild.me:  # guild.me is the bot
                             message_normalized = normalize_name(message.content)
                             
-                            # 🔧 NEW: Use hierarchical matching approach
+                            # 🔧 NEW: Use hierarchical matching approach with username filtering
                             is_match, match_type, confidence = check_player_mention_hierarchical(
-                                player_name_normalized, player_uuid, message_normalized, message.content
+                                player_name_normalized, player_uuid, message_normalized, message.content,
+                                message_author_name=message.author.display_name
                             )
                             
                             if is_match:
