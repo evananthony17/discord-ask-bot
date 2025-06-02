@@ -130,16 +130,27 @@ async def handle_disambiguation_selection(reaction, user, selected_player, selec
         log_info(f"🔧 DEBUG: Entering blocking logic")
         mention = recent_mentions[0]
         status = mention["status"]
+        player_name = mention["player"]["name"]
         log_info(f"🔧 DEBUG: Status is: {status}")
         
         log_info(f"🚫 Selected player {selected_player['name']} has recent mention with status: {status}")
         
-        # Send blocking message
+        # Send blocking message with specific URLs
         try:
             if status == "answered":
-                error_msg = await reaction.message.channel.send(
-                    f"This player has been asked about recently. There is an answer here: {FINAL_ANSWER_LINK}"
-                )
+                # 🔧 NEW: Use the specific answer URL if available
+                answer_url = mention.get("answer_url")
+                if answer_url:
+                    error_msg = await reaction.message.channel.send(
+                        f"**{player_name}** was answered recently: {answer_url}"
+                    )
+                    log_info(f"🔧 SPECIFIC URL: Used specific answer URL for {player_name}")
+                else:
+                    # Fallback to generic channel link
+                    error_msg = await reaction.message.channel.send(
+                        f"This player has been asked about recently. There is an answer here: {FINAL_ANSWER_LINK}"
+                    )
+                    log_info(f"🔧 FALLBACK URL: Used generic channel link for {player_name}")
             else:  # pending
                 error_msg = await reaction.message.channel.send(
                     "This player has been asked about recently, please be patient and wait for an answer."

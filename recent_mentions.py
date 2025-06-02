@@ -32,6 +32,7 @@ async def check_recent_player_mentions(guild, players_to_check):
         
         # STEP 1: Check question-reposting channel (answering channel) FIRST
         found_in_answering = False
+        answering_message_url = None
         if answering_channel:
             try:
                 message_count = 0
@@ -47,6 +48,7 @@ async def check_recent_player_mentions(guild, players_to_check):
                             log_info(f"RECENT MENTION CHECK: Match details - player_normalized: '{player_name_normalized}', message_snippet: '{message_normalized[:100]}...', uuid: '{player_uuid[:8]}'")
                             log_info(f"RECENT MENTION CHECK: Message content snippet: '{message.content[:100]}...'")
                             found_in_answering = True
+                            answering_message_url = message.jump_url  # 🔧 CAPTURE THE MESSAGE URL
                             
                             # BYPASS WEBHOOK - Direct Discord message for debugging
                             try:
@@ -63,6 +65,7 @@ async def check_recent_player_mentions(guild, players_to_check):
         
         # STEP 2: ONLY if found in question-reposting, THEN check answered-by-expert
         status = None
+        answer_message_url = None
         if found_in_answering:
             log_info(f"RECENT MENTION CHECK: {player['name']} found in question-reposting, now checking answered-by-expert")
             
@@ -83,6 +86,7 @@ async def check_recent_player_mentions(guild, players_to_check):
                                 log_info(f"RECENT MENTION CHECK: Match details - player_normalized: '{player_name_normalized}', message_snippet: '{message_normalized[:100]}...', uuid: '{player_uuid[:8]}'")
                                 log_info(f"RECENT MENTION CHECK: Message content snippet: '{message.content[:100]}...'")
                                 found_in_final = True
+                                answer_message_url = message.jump_url  # 🔧 CAPTURE THE ANSWER MESSAGE URL
                                 
                                 # BYPASS WEBHOOK - Direct Discord message for debugging
                                 try:
@@ -103,6 +107,7 @@ async def check_recent_player_mentions(guild, players_to_check):
             if found_in_final:
                 status = "answered"  # Asked and answered
                 log_info(f"RECENT MENTION CHECK: {player['name']} found in both channels - status: answered")
+                log_info(f"RECENT MENTION CHECK: Answer URL captured: {answer_message_url}")
             else:
                 status = "pending"   # Asked but not answered yet
                 log_info(f"RECENT MENTION CHECK: {player['name']} found in question-reposting but not answered - status: pending")
@@ -138,10 +143,18 @@ async def check_recent_player_mentions(guild, players_to_check):
                     break
             
             if not already_added:
-                recent_mentions.append({
+                # 🔧 ENHANCED: Include message URLs in the return data
+                mention_data = {
                     "player": player,
-                    "status": status
-                })
+                    "status": status,
+                    "answering_url": answering_message_url,  # URL to question in #question-reposting
+                }
+                
+                # 🔧 ONLY include answer_url if status is "answered"
+                if status == "answered" and answer_message_url:
+                    mention_data["answer_url"] = answer_message_url  # URL to answer in #answered-by-expert
+                
+                recent_mentions.append(mention_data)
                 log_info(f"RECENT MENTION CHECK: Added recent mention: {player['name']} ({player['team']}) - {status}")
                 
                 # BYPASS WEBHOOK - Direct Discord message for adding to results
@@ -149,6 +162,8 @@ async def check_recent_player_mentions(guild, players_to_check):
                     logs_channel = discord.utils.get(guild.text_channels, name="bernie-stock-logs")
                     if logs_channel:
                         await logs_channel.send(f"🔧 **DEBUG**: ADDED to results: {player['name']} ({player['team']}) - {status}")
+                        if status == "answered" and answer_message_url:
+                            await logs_channel.send(f"🔧 **DEBUG**: Answer URL: {answer_message_url}")
                 except:
                     pass
     

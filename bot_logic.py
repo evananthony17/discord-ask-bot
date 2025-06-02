@@ -33,20 +33,41 @@ async def handle_multi_player_question(ctx, question, matched_players):
         except:
             pass
         
-        # Create a detailed blocking message
+        # Create a detailed blocking message with specific URLs
         if len(recent_mentions) == 1:
             mention = recent_mentions[0]
             player = mention["player"]
             status = mention["status"]
+            
             if status == "answered":
-                error_msg = await ctx.send(f"One of the players you asked about ({player['name']}) has been asked about recently. There is an answer here: {FINAL_ANSWER_LINK}")
+                # 🔧 NEW: Use specific answer URL if available
+                answer_url = mention.get("answer_url")
+                if answer_url:
+                    error_msg = await ctx.send(f"One of the players you asked about (**{player['name']}**) was answered recently: {answer_url}")
+                else:
+                    error_msg = await ctx.send(f"One of the players you asked about ({player['name']}) has been asked about recently. There is an answer here: {FINAL_ANSWER_LINK}")
             else:
                 error_msg = await ctx.send(f"One of the players you asked about ({player['name']}) has been asked about recently, please be patient and wait for an answer.")
         else:
-            # Multiple players with recent mentions
-            player_names = [f"{m['player']['name']}" for m in recent_mentions]
-            players_text = ", ".join(player_names)
-            error_msg = await ctx.send(f"Some of the players you asked about ({players_text}) have been asked about recently, please be patient and wait for answers.")
+            # Multiple players with recent mentions - show count and generic message
+            answered_players = [m for m in recent_mentions if m["status"] == "answered"]
+            pending_players = [m for m in recent_mentions if m["status"] == "pending"]
+            
+            if answered_players and not pending_players:
+                # All mentioned players were answered
+                player_names = [f"{m['player']['name']}" for m in answered_players]
+                players_text = ", ".join(player_names)
+                error_msg = await ctx.send(f"Some of the players you asked about ({players_text}) have been answered recently. Check: {FINAL_ANSWER_LINK}")
+            elif pending_players and not answered_players:
+                # All mentioned players are pending
+                player_names = [f"{m['player']['name']}" for m in pending_players]
+                players_text = ", ".join(player_names)
+                error_msg = await ctx.send(f"Some of the players you asked about ({players_text}) have been asked about recently, please be patient and wait for answers.")
+            else:
+                # Mix of answered and pending
+                player_names = [f"{m['player']['name']}" for m in recent_mentions]
+                players_text = ", ".join(player_names)
+                error_msg = await ctx.send(f"Some of the players you asked about ({players_text}) have been asked about recently, please be patient and check for existing answers.")
         
         await error_msg.delete(delay=10)
         return True  # Blocked
@@ -93,7 +114,14 @@ async def handle_single_player_question(ctx, question, matched_players):
                 print(f"SINGLE PLAYER: Failed to delete message: {e}")
             
             if status == "answered":
-                error_msg = await ctx.send(f"This player has been asked about recently. There is an answer here: {FINAL_ANSWER_LINK}")
+                # 🔧 NEW: Use specific answer URL if available
+                answer_url = mention.get("answer_url")
+                if answer_url:
+                    error_msg = await ctx.send(f"**{player['name']}** was answered recently: {answer_url}")
+                    print(f"SINGLE PLAYER: Used specific answer URL for {player['name']}")
+                else:
+                    error_msg = await ctx.send(f"This player has been asked about recently. There is an answer here: {FINAL_ANSWER_LINK}")
+                    print(f"SINGLE PLAYER: Used generic answer link for {player['name']}")
             else:
                 error_msg = await ctx.send("This player has been asked about recently, please be patient and wait for an answer.")
             
