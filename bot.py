@@ -2,7 +2,6 @@ import discord
 from discord.ext import commands
 import asyncio
 from datetime import datetime, timedelta
-import re
 
 # Import all our modules
 from config import (
@@ -135,20 +134,11 @@ async def on_message(message):
                             except ValueError:
                                 pass
                         
-                        # If no @ mention found, look for HTML comment with user ID
-                        if not extracted_user_id:
-                            user_id_match = re.search(r'<!-- USER_ID:(\d+) -->', content)
-                            if user_id_match:
-                                try:
-                                    extracted_user_id = int(user_id_match.group(1))
-                                except ValueError:
-                                    pass
-                        
-                        # Find the question (skip status lines and HTML comments)
+                        # Find the question (skip status lines)
                         question_lines = []
                         for line in lines[1:]:
                             if not line.startswith("❗") and not line.startswith("✅") and line.strip():
-                                if not line.startswith("Reply to this message") and not line.startswith("<!--"):
+                                if not line.startswith("Reply to this message"):
                                     question_lines.append(line)
                         
                         question = "\n".join(question_lines).strip()
