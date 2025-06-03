@@ -32,7 +32,6 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 def is_ambiguous_single_player_question(question, matched_players):
     """Determine if this is an ambiguous single-player question requiring disambiguation"""
     
-    # If only 2 players found, it's likely ambiguous (like "acuna" finding both Acuñas)
     if len(matched_players) == 2:
         return True
     
@@ -42,13 +41,21 @@ def is_ambiguous_single_player_question(question, matched_players):
     
     # If question contains multi-player words, it's intentional
     if any(indicator in question_lower for indicator in multi_player_indicators):
+        # EXCEPTION: If only one unique last name mentioned, it's probably ambiguous
+        last_names = set()
+        for player in matched_players:
+            last_name = player['name'].split()[-1].lower()
+            last_names.add(last_name)
+        
+        # If all players share the same last name, it's ambiguous despite "and"
+        if len(last_names) == 1:
+            return True
+        
         return False
     
-    # If 3+ players but no multi-player indicators, probably ambiguous
     if len(matched_players) >= 3:
         return True
     
-    # Default to ambiguous for safety
     return True
 
 # -------- EVENTS --------
@@ -72,6 +79,7 @@ async def on_ready():
     log_info("BOT READY: Cleaning up orphaned disambiguation messages")
     pending_selections.clear()
 
+@bot.event  
 @bot.event  
 async def on_message(message):
     if message.author.bot:
@@ -97,32 +105,76 @@ async def on_message(message):
     # Handle expert answers
     elif message.channel.name == ANSWERING_CHANNEL and message.reference:
         referenced = message.reference.resolved
+        
+        # Try to get from question_map first (for new messages)
+        meta = None
         if referenced and referenced.id in question_map:
             meta = question_map.pop(referenced.id)
+        
+        # If not in question_map (older messages), extract info from the message content
+        if not meta and referenced:
+            try:
+                # Parse the message content to extract question and asker
+                content = referenced.content
+                
+                # Look for the pattern: "Username asked:\nquestion text"
+                if " asked:\n" in content:
+                    lines = content.split('\n')
+                    first_line = lines[0]
+                    
+                    # Extract username (remove ** formatting)
+                    if first_line.endswith(" asked:"):
+                        username = first_line.replace("**", "").replace(" asked:", "")
+                        
+                        # Find the question (skip status lines)
+                        question_lines = []
+                        for line in lines[1:]:
+                            if not line.startswith("❗") and not line.startswith("✅") and line.strip():
+                                if not line.startswith("Reply to this message"):
+                                    question_lines.append(line)
+                        
+                        question = "\n".join(question_lines).strip()
+                        
+                        # Create meta object
+                        meta = {
+                            'question': question,
+                            'asker_id': None,  # We can't recover the ID, but we have the name
+                            'asker_name': username
+                        }
+            except Exception as e:
+                log_error(f"Failed to parse old message format: {e}")
+        
+        if meta:
             final_channel = discord.utils.get(message.guild.text_channels, name=FINAL_ANSWER_CHANNEL)
 
             if final_channel:
-                asker_mention = f"<@{meta['asker_id']}>"
+                # Use asker_id if available, otherwise use name
+                if meta.get('asker_id'):
+                    asker_mention = f"<@{meta['asker_id']}>"
+                else:
+                    asker_mention = f"**{meta.get('asker_name', 'Unknown User')}**"
+                
                 expert_name = message.author.display_name
                 formatted_answer = f"-----\n**Question:**\n{asker_mention} asked: {meta['question']}\n\n**{expert_name}** replied:\n{message.content}\n-----"
                 await final_channel.send(formatted_answer)
+            
+            # Update status regardless of whether it was in question_map
+            try:
+                fresh_message = await message.channel.fetch_message(referenced.id)
+                original_content = fresh_message.content
                 
-                try:
-                    fresh_message = await message.channel.fetch_message(referenced.id)
-                    original_content = fresh_message.content
-                    
-                    if "❗ **Not Answered**\n\nReply to this message to answer." in original_content:
-                        updated_content = original_content.replace("❗ **Not Answered**\n\nReply to this message to answer.", "✅ **Answered**")
-                    elif "❗ **Not Answered**" in original_content:
-                        updated_content = original_content.replace("❗ **Not Answered**", "✅ **Answered**")
-                        updated_content = updated_content.replace("\nReply to this message to answer.", "").replace("Reply to this message to answer.", "")
-                    else:
-                        updated_content = original_content + "\n\n✅ **Answered**\n"
-                    
-                    if updated_content != original_content:
-                        await fresh_message.edit(content=updated_content)
-                except Exception as e:
-                    log_error(f"Failed to edit original message: {e}")
+                if "❗ **Not Answered**\n\nReply to this message to answer." in original_content:
+                    updated_content = original_content.replace("❗ **Not Answered**\n\nReply to this message to answer.", "✅ **Answered**")
+                elif "❗ **Not Answered**" in original_content:
+                    updated_content = original_content.replace("❗ **Not Answered**", "✅ **Answered**")
+                    updated_content = updated_content.replace("\nReply to this message to answer.", "").replace("Reply to this message to answer.", "")
+                else:
+                    updated_content = original_content + "\n\n✅ **Answered**\n"
+                
+                if updated_content != original_content:
+                    await fresh_message.edit(content=updated_content)
+            except Exception as e:
+                log_error(f"Failed to edit original message: {e}")
     
     await bot.process_commands(message)
 
@@ -429,6 +481,51 @@ async def clear_stuck_selections(ctx, user_id: int = None):
         await ctx.send(f"✅ Cleared all {count} pending selections")
     
     log_info(f"ADMIN CLEAR: {ctx.author.display_name} cleared stuck selections")
+
+# -------- ADMIN CORRECTION COMMAND --------
+@bot.command(name="correct")
+@commands.has_permissions(administrator=True)
+async def correct_answer(ctx, message_link: str, *, correction: str):
+    """
+    Admin command to post a correction to a bot message
+    Usage: !correct https://discord.com/channels/.../... This is the correction
+    """
+    try:
+        # Extract message ID from Discord link
+        message_id = int(message_link.split('/')[-1])
+        
+        # Try to find the message in final answer channel
+        final_channel = discord.utils.get(ctx.guild.text_channels, name=FINAL_ANSWER_CHANNEL)
+        if not final_channel:
+            await ctx.send("❌ Could not find final answer channel")
+            return
+            
+        original_message = await final_channel.fetch_message(message_id)
+        
+        # Verify it's a bot message
+        if original_message.author != bot.user:
+            await ctx.send("❌ Can only correct bot messages")
+            return
+        
+        # Post correction as a follow-up
+        correction_msg = f"**CORRECTION:**\n{correction}\n\n*— Corrected by {ctx.author.display_name}*"
+        await final_channel.send(correction_msg)
+        
+        # React to original message to show it's been corrected
+        await original_message.add_reaction("📝")
+        
+        await ctx.send("✅ Correction posted")
+        
+        # Log it
+        log_info(f"CORRECTION: {ctx.author.display_name} corrected message {message_id}")
+        
+    except ValueError:
+        await ctx.send("❌ Invalid message link format")
+    except discord.NotFound:
+        await ctx.send("❌ Message not found")
+    except Exception as e:
+        await ctx.send(f"❌ Error: {e}")
+        log_error(f"Correction command error: {e}")
 
 # -------- RUN --------
 if __name__ == "__main__":
