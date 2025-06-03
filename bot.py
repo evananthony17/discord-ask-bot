@@ -12,7 +12,7 @@ from config import (
     FINAL_ANSWER_LINK, PRE_SELECTION_DELAY, REACTIONS, 
     banned_categories, pending_selections, timeout_tasks, players_data
 )
-from logging_system import log_info, log_error, log_success, log_analytics
+from logging_system import log_info, log_error, log_success, log_analytics, start_batching
 from utils import load_words_from_json, load_players_from_json, load_nicknames_from_json, is_likely_player_request
 from validation import validate_question
 from player_matching import check_player_mentioned
@@ -69,6 +69,7 @@ def is_ambiguous_single_player_question(question, matched_players):
 async def on_ready():
     # Original startup logic (KEEP THIS!)
     print(f"✅ Logged in as {bot.user}")
+    start_batching()  # Start batching logs
     
     await log_analytics("Bot Health", event="startup", bot_name=str(bot.user), 
                         total_questions=0, blocked_questions=0, error_count=0)
@@ -171,6 +172,11 @@ async def on_message(message):
                 
                 expert_name = message.author.display_name
                 formatted_answer = f"-----\n**Question:**\n{asker_mention} asked: {meta['question']}\n\n**{expert_name}** replied:\n{message.content}\n-----"
+                
+                print(f"meta: {meta}")
+                print(f"asker_mention: {asker_mention}")
+                print(f"formatted_answer: {formatted_answer}")
+
                 await final_channel.send(formatted_answer)
 
             '''if referenced and referenced.id in question_map:

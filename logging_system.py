@@ -3,6 +3,45 @@ import aiohttp
 from datetime import datetime
 from config import WEBHOOK_LOGS_URL, WEBHOOK_ANALYTICS_URL, LOG_LEVEL, LOG_LEVELS
 
+log_batch = []
+batch_lock = asyncio.Lock()
+BATCH_INTERVAL = 10  # seconds
+MAX_BATCH_SIZE = 5   # send immediately if this many logs are queued
+
+async def batch_sender():
+    while True:
+        await asyncio.sleep(BATCH_INTERVAL)
+        await send_batch()
+
+async def send_batch():
+    async with batch_lock:
+        if not log_batch:
+            return
+        # Combine all embeds into one payload (or send multiple if needed)
+        payload = {"embeds": log_batch[:10]}  # Discord allows up to 10 embeds per message
+        await send_webhook(WEBHOOK_LOGS_URL, payload)
+        del log_batch[:10]  # Remove sent logs
+
+def start_batching():
+    asyncio.create_task(batch_sender())
+
+async def log_to_discord_batched(level, title, message, details=None, fields=None, color=None):
+    embed = {
+        "title": f"{level} - {title}",
+        "description": f"```{message}```" if len(message) <= 2000 else f"```{message[:1900]}...\n[TRUNCATED]```",
+        "color": color or 0x0099ff,
+        "timestamp": datetime.utcnow().isoformat(),
+        "footer": {"text": f"Level: {level}"}
+    }
+    if details:
+        embed["fields"] = [{"name": "Details", "value": f"```{details[:1000]}```", "inline": False}]
+    if fields:
+        embed.setdefault("fields", []).extend(fields)
+    async with batch_lock:
+        log_batch.append(embed)
+        if len(log_batch) >= MAX_BATCH_SIZE:
+            await send_batch()
+
 # -------- ENHANCED WEBHOOK LOGGING SYSTEM --------
 
 async def send_webhook(webhook_url, payload):
@@ -158,24 +197,24 @@ async def log_analytics(event_type, **kwargs):
 def log_debug(message, details=None):
     """Log debug message"""
     print(f"DEBUG: {message}")
-    asyncio.create_task(log_to_discord("DEBUG", "Debug", message, details))
+    asyncio.create_task(log_to_discord_batched("DEBUG", "Debug", message, details))
 
 def log_info(message, details=None):
     """Log info message"""
     print(f"INFO: {message}")
-    asyncio.create_task(log_to_discord("INFO", "Info", message, details))
+    asyncio.create_task(log_to_discord_batched("INFO", "Info", message, details))
 
 def log_warning(message, details=None):
     """Log warning message"""
     print(f"WARNING: {message}")
-    asyncio.create_task(log_to_discord("WARNING", "Warning", message, details))
+    asyncio.create_task(log_to_discord_batched("WARNING", "Warning", message, details))
 
 def log_error(message, details=None):
     """Log error message"""
     print(f"ERROR: {message}")
-    asyncio.create_task(log_to_discord("ERROR", "Error", message, details))
+    asyncio.create_task(log_to_discord_batched("ERROR", "Error", message, details))
 
 def log_success(message, details=None):
     """Log success message"""
     print(f"SUCCESS: {message}")
-    asyncio.create_task(log_to_discord("SUCCESS", "Success", message, details))
+    asyncio.create_task(log_to_discord_batched("SUCCESS", "Success", message, details))
