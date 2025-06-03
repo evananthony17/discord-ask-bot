@@ -481,7 +481,10 @@ async def clear_stuck_selections(ctx, user_id: int = None):
 
 # -------- ADMIN CORRECTION COMMAND --------
 @bot.command(name="correct")
-@commands.has_permissions(administrator=True)
+@commands.check_any(
+    commands.has_permissions(administrator=True),
+    commands.has_any_role("Stub Savant", "ModSquad")
+)
 async def correct_answer(ctx, message_link: str, *, correction: str):
     """
     Admin command to replace a bot message with a correction
