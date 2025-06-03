@@ -80,7 +80,6 @@ async def on_ready():
     pending_selections.clear()
 
 @bot.event  
-@bot.event  
 async def on_message(message):
     if message.author.bot:
         return
@@ -122,9 +121,18 @@ async def on_message(message):
                     lines = content.split('\n')
                     first_line = lines[0]
                     
-                    # Extract username (remove ** formatting)
+                    # Extract the asker info
                     if first_line.endswith(" asked:"):
-                        username = first_line.replace("**", "").replace(" asked:", "")
+                        asker_part = first_line.replace(" asked:", "")
+                        
+                        # Try to extract user ID from @ mention
+                        extracted_user_id = None
+                        if asker_part.startswith("<@") and asker_part.endswith(">"):
+                            try:
+                                # Extract user ID from <@123456789> format
+                                extracted_user_id = int(asker_part.replace("<@", "").replace(">", ""))
+                            except ValueError:
+                                pass
                         
                         # Find the question (skip status lines)
                         question_lines = []
@@ -138,8 +146,8 @@ async def on_message(message):
                         # Create meta object
                         meta = {
                             'question': question,
-                            'asker_id': None,  # We can't recover the ID, but we have the name
-                            'asker_name': username
+                            'asker_id': extracted_user_id,  # Will be None if we couldn't extract it
+                            'asker_name': asker_part if not extracted_user_id else None
                         }
             except Exception as e:
                 log_error(f"Failed to parse old message format: {e}")
@@ -148,7 +156,7 @@ async def on_message(message):
             final_channel = discord.utils.get(message.guild.text_channels, name=FINAL_ANSWER_CHANNEL)
 
             if final_channel:
-                # Use asker_id if available, otherwise use name
+                # Use asker_id if available (creates proper @ mention), otherwise use name
                 if meta.get('asker_id'):
                     asker_mention = f"<@{meta['asker_id']}>"
                 else:
@@ -442,20 +450,6 @@ async def on_reaction_add(reaction, user):
         cleanup_invalid_selection(original_user_id, selection_data)
         log_info(f"CLEANUP: Invalid reaction from user {user.id}, cleaned up selection")
 
-
-# 🔧 SAFEGUARD 6: Cleanup orphaned selections on bot restart
-'''@bot.event
-async def on_ready():
-    """Clean up any orphaned disambiguation messages on restart"""
-    log_info("BOT READY: Cleaning up orphaned disambiguation messages")
-    
-    # Clear the pending_selections dict since bot restarted
-    pending_selections.clear()
-    
-    # Optional: You could scan recent messages and delete any that look like
-    # orphaned disambiguation messages, but this might be overkill'''
-
-
 # 🔧 SAFEGUARD 7: Admin command to force-clear stuck selections
 @bot.command(name='clear_stuck')
 @commands.has_permissions(administrator=True)
@@ -487,8 +481,8 @@ async def clear_stuck_selections(ctx, user_id: int = None):
 @commands.has_permissions(administrator=True)
 async def correct_answer(ctx, message_link: str, *, correction: str):
     """
-    Admin command to post a correction to a bot message
-    Usage: !correct https://discord.com/channels/.../... This is the correction
+    Admin command to replace a bot message with a correction
+    Usage: !correct https://discord.com/channels/.../... This is the corrected response
     """
     try:
         # Extract message ID from Discord link
@@ -507,17 +501,63 @@ async def correct_answer(ctx, message_link: str, *, correction: str):
             await ctx.send("❌ Can only correct bot messages")
             return
         
-        # Post correction as a follow-up
-        correction_msg = f"**CORRECTION:**\n{correction}\n\n*— Corrected by {ctx.author.display_name}*"
-        await final_channel.send(correction_msg)
+        # Parse the original message to extract the question and asker
+        original_content = original_message.content
         
-        # React to original message to show it's been corrected
-        await original_message.add_reaction("📝")
+        # Extract the question section and asker info
+        question_section = ""
+        asker_mention = ""
         
-        await ctx.send("✅ Correction posted")
+        if "**Question:**" in original_content and "replied:" in original_content:
+            # Split at the expert reply
+            parts = original_content.split(" replied:")
+            if len(parts) >= 2:
+                question_section = parts[0].strip()
+                
+                # Extract asker mention/info from question section
+                lines = question_section.split('\n')
+                for line in lines:
+                    if " asked:" in line:
+                        # This line contains the asker info
+                        asker_part = line.split(" asked:")[0].strip()
+                        # Remove any "**Question:**" prefix
+                        asker_part = asker_part.replace("**Question:**", "").strip()
+                        asker_mention = asker_part
+                        break
+        
+        # If we couldn't parse it, fall back to a generic format
+        if not question_section or not asker_mention:
+            await ctx.send("❌ Could not parse original message format")
+            return
+        
+        # Create the corrected message
+        expert_name = ctx.author.display_name
+        corrected_content = f"-----\n{question_section}\n\n**{expert_name}** replied:\n{correction}\n\n📝 *This answer was corrected by {ctx.author.display_name}*\n-----"
+        
+        # Edit the original message
+        await original_message.edit(content=corrected_content)
+        
+        await ctx.send("✅ Message corrected and original user will be notified")
         
         # Log it
         log_info(f"CORRECTION: {ctx.author.display_name} corrected message {message_id}")
+        
+        # Send a notification to the original asker if it's a mention
+        if asker_mention.startswith("<@") and asker_mention.endswith(">"):
+            try:
+                # Extract user ID from mention
+                user_id = int(asker_mention.replace("<@", "").replace(">", ""))
+                user = await ctx.guild.fetch_member(user_id)
+                
+                # Send DM notification
+                try:
+                    await user.send(f"📝 **Your question has been updated with a corrected answer**\n\nYour question was answered again with updated information. Check #{FINAL_ANSWER_CHANNEL} for the latest response!")
+                except discord.Forbidden:
+                    # Can't send DM, mention in channel instead
+                    await final_channel.send(f"{asker_mention} Your question has been updated with a corrected answer!", delete_after=10)
+            except:
+                # Couldn't notify user, but correction still worked
+                pass
         
     except ValueError:
         await ctx.send("❌ Invalid message link format")
