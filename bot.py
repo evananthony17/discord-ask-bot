@@ -165,7 +165,10 @@ async def on_message(message):
                 expert_name = message.author.display_name
                 formatted_answer = f"-----\n**Question:**\n{asker_mention} asked: {meta['question']}\n\n**{expert_name}** replied:\n{message.content}\n-----"
                 await final_channel.send(formatted_answer)
-            
+
+            if referenced and referenced.id in question_map:
+                return
+
             # Update status regardless of whether it was in question_map
             try:
                 fresh_message = await message.channel.fetch_message(referenced.id)
