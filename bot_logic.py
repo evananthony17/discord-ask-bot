@@ -157,9 +157,9 @@ async def process_approved_question(channel, user, question, original_message=No
     answering_channel = discord.utils.get(channel.guild.text_channels, name=ANSWERING_CHANNEL)
     
     if answering_channel:
-        # Format the question for the answering channel
+        # Use display name for experts to see, but store user ID in hidden HTML comment
         asker_name = f"**{user.display_name}**"
-        formatted_message = f"{asker_name} asked:\n> {question}\n\n❗ **Not Answered**\n\nReply to this message to answer."
+        formatted_message = f"{asker_name} asked:\n> {question}\n<!-- USER_ID:{user.id} -->\n\n❗ **Not Answered**\n\nReply to this message to answer."
         
         try:
             # Post to answering channel
@@ -169,7 +169,7 @@ async def process_approved_question(channel, user, question, original_message=No
             # Store the question mapping for later reference
             question_map[posted_message.id] = {
                 "question": question,
-                "asker_id": user.id
+                "asker_id": user.id  # Store the actual user ID
             }
             print(f"Stored question mapping for message ID {posted_message.id}")
             
