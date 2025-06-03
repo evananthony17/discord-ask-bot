@@ -501,30 +501,36 @@ async def correct_answer(ctx, message_link: str, *, correction: str):
             await ctx.send("❌ Can only correct bot messages")
             return
         
-        # Parse the original message more carefully
+        # Parse the original message to extract the question section
         original_content = original_message.content
         
-        # Find the question section by looking for the pattern
-        question_line = ""
+        # Extract everything before " replied:"
+        question_section = ""
         asker_mention = ""
         
-        lines = original_content.split('\n')
-        for line in lines:
-            if " asked:" in line:
-                question_line = line.strip()
-                # Extract just the @ mention part for notifications
-                asker_part = line.split(" asked:")[0].strip()
-                if asker_part.startswith("<@") and ">" in asker_part:
-                    asker_mention = asker_part.split(">")[0] + ">"
-                break
+        if "**Question:**" in original_content and "replied:" in original_content:
+            # Split at the first " replied:" occurrence
+            parts = original_content.split(" replied:", 1)
+            if len(parts) >= 2:
+                question_section = parts[0].strip()
+                
+                # Extract asker mention/info from question section for notifications
+                lines = question_section.split('\n')
+                for line in lines:
+                    if " asked:" in line:
+                        asker_part = line.split(" asked:")[0].strip()
+                        asker_part = asker_part.replace("**Question:**", "").strip()
+                        asker_mention = asker_part
+                        break
         
-        if not question_line:
-            await ctx.send("❌ Could not find question in original message")
+        # If we couldn't parse it, fall back to a generic format
+        if not question_section:
+            await ctx.send("❌ Could not parse original message format")
             return
         
-        # Create the corrected message with clean format
+        # Create the corrected message (preserving the full question section)
         expert_name = ctx.author.display_name
-        corrected_content = f"-----\n**Question:**\n{question_line}\n\n**{expert_name}** replied:\n{correction}\n\n*This answer was corrected by {expert_name}*\n-----"
+        corrected_content = f"{question_section}\n\n**{expert_name}** replied:\n{correction}\n\n*This answer was corrected by {expert_name}*\n-----"
         
         # Post new corrected message
         new_message = await final_channel.send(corrected_content)
@@ -532,22 +538,13 @@ async def correct_answer(ctx, message_link: str, *, correction: str):
         # Delete the original message
         await original_message.delete()
         
-        # Send confirmation and delete after 10 seconds
-        confirmation = await ctx.send("✅ Message corrected, original deleted, and user will be notified")
-        
-        # Delete the !correct command and confirmation after 10 seconds
-        await asyncio.sleep(10)
-        try:
-            await ctx.message.delete()  # Delete the !correct command
-            await confirmation.delete()  # Delete the confirmation
-        except:
-            pass  # If already deleted or no permission, ignore
+        await ctx.send("✅ Message corrected, original deleted, and user will be notified")
         
         # Log it
         log_info(f"CORRECTION: {ctx.author.display_name} corrected and replaced message {message_id}")
         
         # Send a notification to the original asker if it's a mention
-        if asker_mention:
+        if asker_mention and asker_mention.startswith("<@") and asker_mention.endswith(">"):
             try:
                 # Extract user ID from mention
                 user_id = int(asker_mention.replace("<@", "").replace(">", ""))
