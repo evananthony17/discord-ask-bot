@@ -134,6 +134,17 @@ async def on_message(message):
                             except ValueError:
                                 pass
                         
+                        # If no @ mention found, try to look up user by display name
+                        if not extracted_user_id and asker_part.startswith("**") and asker_part.endswith("**"):
+                            # Extract display name from **DisplayName** format
+                            display_name = asker_part.replace("**", "")
+                            
+                            # Look up user by display name in the guild
+                            for member in message.guild.members:
+                                if member.display_name == display_name:
+                                    extracted_user_id = member.id
+                                    break
+                        
                         # Find the question (skip status lines)
                         question_lines = []
                         for line in lines[1:]:
@@ -146,7 +157,7 @@ async def on_message(message):
                         # Create meta object
                         meta = {
                             'question': question,
-                            'asker_id': extracted_user_id,  # Will be None if we couldn't extract it
+                            'asker_id': extracted_user_id,  # Will be user ID if found, None if not
                             'asker_name': asker_part if not extracted_user_id else None
                         }
             except Exception as e:
