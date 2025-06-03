@@ -504,63 +504,28 @@ async def correct_answer(ctx, message_link: str, *, correction: str):
             await ctx.send("❌ Can only correct bot messages")
             return
         
-        # Parse the original message to extract the question and asker
+        # Use surgical replacement - find everything up to "replied:" and preserve it
         original_content = original_message.content
         
-        # Extract the question section and asker info
-        question_section = ""
-        asker_mention = ""
-        
-        if "**Question:**" in original_content and "replied:" in original_content:
-            # Split at the expert reply
-            parts = original_content.split(" replied:")
-            if len(parts) >= 2:
-                question_section = parts[0].strip()
-                
-                # Extract asker mention/info from question section
-                lines = question_section.split('\n')
-                for line in lines:
-                    if " asked:" in line:
-                        # This line contains the asker info
-                        asker_part = line.split(" asked:")[0].strip()
-                        # Remove any "**Question:**" prefix
-                        asker_part = asker_part.replace("**Question:**", "").strip()
-                        asker_mention = asker_part
-                        break
-        
-        # If we couldn't parse it, fall back to a generic format
-        if not question_section or not asker_mention:
-            await ctx.send("❌ Could not parse original message format")
+        if "replied:" in original_content:
+            # Find everything up to and including "replied:"
+            before_reply = original_content.split("replied:")[0] + "replied:"
+            
+            # Create the corrected content with surgical replacement
+            corrected_content = before_reply + f"\n{correction}\n\n*This answer was corrected by {ctx.author.display_name}*\n-----"
+            
+            # Edit the original message
+            await original_message.edit(content=corrected_content)
+            
+            # Clean up - delete the command message
+            await ctx.message.delete()
+            
+            # Log it (no confirmation message)
+            log_info(f"CORRECTION: {ctx.author.display_name} corrected message {message_id}")
+            
+        else:
+            await ctx.send("❌ Could not find reply section in message")
             return
-        
-        # Create the corrected message
-        expert_name = ctx.author.display_name
-        corrected_content = f"-----\n{question_section}\n\n**{expert_name}** replied:\n{correction}\n\n📝 *This answer was corrected by {ctx.author.display_name}*\n-----"
-        
-        # Edit the original message
-        await original_message.edit(content=corrected_content)
-        
-        await ctx.send("✅ Message corrected and original user will be notified")
-        
-        # Log it
-        log_info(f"CORRECTION: {ctx.author.display_name} corrected message {message_id}")
-        
-        # Send a notification to the original asker if it's a mention
-        if asker_mention.startswith("<@") and asker_mention.endswith(">"):
-            try:
-                # Extract user ID from mention
-                user_id = int(asker_mention.replace("<@", "").replace(">", ""))
-                user = await ctx.guild.fetch_member(user_id)
-                
-                # Send DM notification
-                try:
-                    await user.send(f"📝 **Your question has been updated with a corrected answer**\n\nYour question was answered again with updated information. Check #{FINAL_ANSWER_CHANNEL} for the latest response!")
-                except discord.Forbidden:
-                    # Can't send DM, mention in channel instead
-                    await final_channel.send(f"{asker_mention} Your question has been updated with a corrected answer!", delete_after=10)
-            except:
-                # Couldn't notify user, but correction still worked
-                pass
         
     except ValueError:
         await ctx.send("❌ Invalid message link format")
