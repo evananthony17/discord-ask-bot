@@ -1,7 +1,11 @@
-import discord
-from config import ANSWERING_CHANNEL, FINAL_ANSWER_LINK, question_map
-from logging_system import log_error, log_analytics
+# Updated bot_logic.py for question_map change
 
+import discord
+from config import ANSWERING_CHANNEL, FINAL_ANSWER_LINK
+from logging_system import log_error, log_analytics
+from question_map_store import load_question_map, save_question_map, append_question
+
+question_map = load_question_map()
 # -------- MULTI-PLAYER QUESTION PROCESSING --------
 
 async def handle_multi_player_question(ctx, question, matched_players):
@@ -167,10 +171,10 @@ async def process_approved_question(channel, user, question, original_message=No
             print(f"Posted question to #{ANSWERING_CHANNEL}")
             
             # Store the question mapping for later reference
-            question_map[posted_message.id] = {
+            append_question(question_map, posted_message.id, {
                 "question": question,
                 "asker_id": user.id
-            }
+            })
             print(f"Stored question mapping for message ID {posted_message.id}")
             
             # ENHANCED: Log analytics for approved question

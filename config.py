@@ -37,7 +37,6 @@ banned_categories = {
 }
 
 # -------- GLOBAL DATA STRUCTURES --------
-question_map = {}  # message_id: {"question": str, "asker_id": int}
 pending_selections = {}  # user_id: {"message": Message, "players": [...], "original_question": str, "locked": bool}
 timeout_tasks = {}  # user_id: asyncio.Task (for proper cleanup)
 players_data = []  # Will hold the MLB API data

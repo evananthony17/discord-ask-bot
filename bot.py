@@ -1,7 +1,10 @@
+# Updated bot.py for questoin_map change
+
 import discord
 from discord.ext import commands
 import asyncio
 from datetime import datetime, timedelta
+from question_map_store import load_question_map, save_question_map, append_question
 
 # Import all our modules
 from config import (
@@ -16,6 +19,9 @@ from player_matching import check_player_mentioned
 from recent_mentions import check_recent_player_mentions, check_fallback_recent_mentions
 from selection_handlers import start_selection_timeout, cancel_selection_timeout, handle_disambiguation_selection, handle_block_selection, cleanup_invalid_selection
 from bot_logic import process_approved_question, get_potential_player_words, handle_multi_player_question, handle_single_player_question
+
+# -------- PERSISTENT QUESTION_ID STORAGE --------
+question_map = load_question_map()
 
 # -------- DUPLICATE PREVENTION --------
 processing_users = set()
@@ -109,6 +115,7 @@ async def on_message(message):
         meta = None
         if referenced and referenced.id in question_map:
             meta = question_map.pop(referenced.id)
+            save_question_map(question_map)  # Save after popping to keep it updated
         
         # If not in question_map (older messages), extract info from the message content
         if not meta and referenced:
@@ -166,8 +173,8 @@ async def on_message(message):
                 formatted_answer = f"-----\n**Question:**\n{asker_mention} asked: {meta['question']}\n\n**{expert_name}** replied:\n{message.content}\n-----"
                 await final_channel.send(formatted_answer)
 
-            if referenced and referenced.id in question_map:
-                return
+            '''if referenced and referenced.id in question_map:
+                return'''
 
             # Update status regardless of whether it was in question_map
             try:
