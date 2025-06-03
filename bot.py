@@ -171,15 +171,18 @@ async def on_message(message):
                 fresh_message = await message.channel.fetch_message(referenced.id)
                 original_content = fresh_message.content
                 
-                if "❗ **Not Answered**\n\nReply to this message to answer." in original_content:
+                # Check if already answered
+                if "✅ **Answered**" in original_content:
+                    pass  # Already answered, do nothing
+                elif "❗ **Not Answered**\n\nReply to this message to answer." in original_content:
                     updated_content = original_content.replace("❗ **Not Answered**\n\nReply to this message to answer.", "✅ **Answered**")
+                    await fresh_message.edit(content=updated_content)
                 elif "❗ **Not Answered**" in original_content:
                     updated_content = original_content.replace("❗ **Not Answered**", "✅ **Answered**")
                     updated_content = updated_content.replace("\nReply to this message to answer.", "").replace("Reply to this message to answer.", "")
+                    await fresh_message.edit(content=updated_content)
                 else:
                     updated_content = original_content + "\n\n✅ **Answered**\n"
-                
-                if updated_content != original_content:
                     await fresh_message.edit(content=updated_content)
             except Exception as e:
                 log_error(f"Failed to edit original message: {e}")
