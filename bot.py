@@ -10,7 +10,7 @@ from question_map_store import load_question_map, save_question_map, append_ques
 from config import (
     DISCORD_TOKEN, SUBMISSION_CHANNEL, ANSWERING_CHANNEL, FINAL_ANSWER_CHANNEL,
     FINAL_ANSWER_LINK, PRE_SELECTION_DELAY, REACTIONS, 
-    banned_categories, question_map, pending_selections, timeout_tasks, players_data
+    banned_categories, pending_selections, timeout_tasks, players_data
 )
 from logging_system import log_info, log_error, log_success, log_analytics
 from utils import load_words_from_json, load_players_from_json, load_nicknames_from_json, is_likely_player_request
