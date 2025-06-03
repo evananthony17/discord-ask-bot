@@ -158,7 +158,7 @@ async def process_approved_question(channel, user, question, original_message=No
     
     if answering_channel:
         # Format the question for the answering channel
-        asker_name = f"<@{user.id}>"
+        asker_name = f"**{user.display_name}**"
         formatted_message = f"{asker_name} asked:\n> {question}\n\n❗ **Not Answered**\n\nReply to this message to answer."
         
         try:
