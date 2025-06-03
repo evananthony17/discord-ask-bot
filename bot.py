@@ -481,7 +481,7 @@ async def clear_stuck_selections(ctx, user_id: int = None):
 @commands.has_permissions(administrator=True)
 async def correct_answer(ctx, message_link: str, *, correction: str):
     """
-    Admin command to replace a bot message with a correction
+    Admin command to replace a bot message with a correction and delete the original
     Usage: !correct https://discord.com/channels/.../... This is the corrected response
     """
     try:
@@ -501,49 +501,50 @@ async def correct_answer(ctx, message_link: str, *, correction: str):
             await ctx.send("❌ Can only correct bot messages")
             return
         
-        # Parse the original message to extract the question and asker
+        # Parse the original message to extract the question section
         original_content = original_message.content
         
-        # Extract the question section and asker info
+        # Extract everything before " replied:"
         question_section = ""
         asker_mention = ""
         
         if "**Question:**" in original_content and "replied:" in original_content:
-            # Split at the expert reply
-            parts = original_content.split(" replied:")
+            # Split at the first " replied:" occurrence
+            parts = original_content.split(" replied:", 1)
             if len(parts) >= 2:
                 question_section = parts[0].strip()
                 
-                # Extract asker mention/info from question section
+                # Extract asker mention/info from question section for notifications
                 lines = question_section.split('\n')
                 for line in lines:
                     if " asked:" in line:
-                        # This line contains the asker info
                         asker_part = line.split(" asked:")[0].strip()
-                        # Remove any "**Question:**" prefix
                         asker_part = asker_part.replace("**Question:**", "").strip()
                         asker_mention = asker_part
                         break
         
         # If we couldn't parse it, fall back to a generic format
-        if not question_section or not asker_mention:
+        if not question_section:
             await ctx.send("❌ Could not parse original message format")
             return
         
-        # Create the corrected message
+        # Create the corrected message (preserving the full question section)
         expert_name = ctx.author.display_name
-        corrected_content = f"-----\n{question_section}\n\n**{expert_name}** replied:\n{correction}\n\n📝 *This answer was corrected by {ctx.author.display_name}*\n-----"
+        corrected_content = f"{question_section}\n\n**{expert_name}** replied:\n{correction}\n\n*This answer was corrected by {expert_name}*\n-----"
         
-        # Edit the original message
-        await original_message.edit(content=corrected_content)
+        # Post new corrected message
+        new_message = await final_channel.send(corrected_content)
         
-        await ctx.send("✅ Message corrected and original user will be notified")
+        # Delete the original message
+        await original_message.delete()
+        
+        await ctx.send("✅ Message corrected, original deleted, and user will be notified")
         
         # Log it
-        log_info(f"CORRECTION: {ctx.author.display_name} corrected message {message_id}")
+        log_info(f"CORRECTION: {ctx.author.display_name} corrected and replaced message {message_id}")
         
         # Send a notification to the original asker if it's a mention
-        if asker_mention.startswith("<@") and asker_mention.endswith(">"):
+        if asker_mention and asker_mention.startswith("<@") and asker_mention.endswith(">"):
             try:
                 # Extract user ID from mention
                 user_id = int(asker_mention.replace("<@", "").replace(">", ""))
@@ -551,7 +552,7 @@ async def correct_answer(ctx, message_link: str, *, correction: str):
                 
                 # Send DM notification
                 try:
-                    await user.send(f"📝 **Your question has been updated with a corrected answer**\n\nYour question was answered again with updated information. Check #{FINAL_ANSWER_CHANNEL} for the latest response!")
+                    await user.send(f"**Your question has been updated with a corrected answer**\n\nYour question was answered again with updated information. Check #{FINAL_ANSWER_CHANNEL} for the latest response!")
                 except discord.Forbidden:
                     # Can't send DM, mention in channel instead
                     await final_channel.send(f"{asker_mention} Your question has been updated with a corrected answer!", delete_after=10)
