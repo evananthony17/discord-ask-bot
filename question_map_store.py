@@ -1,7 +1,7 @@
 import json
 import os
 
-STORE_FILE = "question_map.json"
+STORE_FILE = "/persistence/question_map.json"
 
 def load_question_map():
     if not os.path.exists(STORE_FILE):

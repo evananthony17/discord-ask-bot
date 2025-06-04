@@ -5,7 +5,6 @@ from config import ANSWERING_CHANNEL, FINAL_ANSWER_LINK
 from logging_system import log_error, log_analytics
 from question_map_store import load_question_map, save_question_map, append_question
 
-question_map = load_question_map()
 # -------- MULTI-PLAYER QUESTION PROCESSING --------
 
 async def handle_multi_player_question(ctx, question, matched_players):
@@ -148,7 +147,7 @@ async def handle_single_player_question(ctx, question, matched_players):
 
 # -------- QUESTION PROCESSING --------
 
-async def process_approved_question(channel, user, question, original_message=None):
+async def process_approved_question(channel, user, question, original_message=None, question_map=None):
     """Process a question that has passed all checks"""
     # Delete the original message if provided
     if original_message:

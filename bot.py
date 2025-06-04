@@ -293,7 +293,7 @@ async def ask_question(ctx, *, question: str = None):
                 return
 
         # All checks passed - post question
-        await process_approved_question(ctx.channel, ctx.author, question, ctx.message)
+        await process_approved_question(ctx.channel, ctx.author, question, ctx.message, question_map)
         
     finally:
         # Always remove user from processing set when done
