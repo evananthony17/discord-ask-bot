@@ -114,8 +114,8 @@ async def on_message(message):
         
         # Try to get from question_map first (for new messages)
         meta = None
-        if referenced and referenced.id in question_map:
-            meta = question_map.pop(referenced.id)
+        if referenced and str(referenced.id) in question_map:
+            meta = question_map.pop(str(referenced.id))
             save_question_map(question_map)  # Save after popping to keep it updated
         
         # If not in question_map (older messages), extract info from the message content

@@ -171,7 +171,7 @@ async def process_approved_question(channel, user, question, original_message=No
             print(f"Posted question to #{ANSWERING_CHANNEL}")
             
             # Store the question mapping for later reference
-            append_question(question_map, posted_message.id, {
+            append_question(question_map, str(posted_message.id), {
                 "question": question,
                 "asker_id": user.id
             })
