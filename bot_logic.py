@@ -7,7 +7,7 @@ from question_map_store import load_question_map, save_question_map, append_ques
 
 # -------- MULTI-PLAYER QUESTION PROCESSING --------
 
-async def handle_multi_player_question(ctx, question, matched_players):
+async def handle_multi_player_question(ctx, question, matched_players, question_map):
     """Handle questions about multiple players (e.g. 'How are Judge, Ohtani, and Acuña doing?')"""
     # Import here to avoid circular imports
     from recent_mentions import check_recent_player_mentions
@@ -82,12 +82,12 @@ async def handle_multi_player_question(ctx, question, matched_players):
         player_list = ", ".join([f"{p['name']} ({p['team']})" for p in matched_players])
         modified_question = f"{question} [Players: {player_list}]"
         
-        await process_approved_question(ctx.channel, ctx.author, modified_question, ctx.message)
+        await process_approved_question(ctx.channel, ctx.author, modified_question, ctx.message, question_map)
         return False  # Not blocked, processed
 
 # -------- SINGLE PLAYER QUESTION PROCESSING --------
 
-async def handle_single_player_question(ctx, question, matched_players):
+async def handle_single_player_question(ctx, question, matched_players, question_map):
     """Handle questions about a single player"""
     try:
         print(f"SINGLE PLAYER: Starting to handle single player question")
@@ -134,7 +134,7 @@ async def handle_single_player_question(ctx, question, matched_players):
         else:
             print("SINGLE PLAYER: No recent mentions, approving question")
             # No recent mentions - approve the question
-            await process_approved_question(ctx.channel, ctx.author, question, ctx.message)
+            await process_approved_question(ctx.channel, ctx.author, question, ctx.message, question_map)
             print("SINGLE PLAYER: Called process_approved_question")
             return False  # Not blocked, processed
             
@@ -142,7 +142,7 @@ async def handle_single_player_question(ctx, question, matched_players):
         print(f"SINGLE PLAYER ERROR: {e}")
         log_error(f"Error in handle_single_player_question: {e}")
         # Fallback - just approve the question
-        await process_approved_question(ctx.channel, ctx.author, question, ctx.message)
+        await process_approved_question(ctx.channel, ctx.author, question, ctx.message, question_map)
         return False
 
 # -------- QUESTION PROCESSING --------
@@ -161,8 +161,8 @@ async def process_approved_question(channel, user, question, original_message=No
     
     if answering_channel:
         # Format the question for the answering channel
-        asker_name = f"**{user.display_name}**"
-        formatted_message = f"{asker_name} asked:\n> {question}\n\n❗ **Not Answered**\n\nReply to this message to answer."
+        asker_mention = f"<@{user.id}>"
+        formatted_message = f"{asker_mention} asked:\n> {question}\n\n❗ **Not Answered**\n\nReply to this message to answer."
         
         try:
             # Post to answering channel

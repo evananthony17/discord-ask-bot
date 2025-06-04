@@ -115,6 +115,7 @@ async def handle_disambiguation_selection(reaction, user, selected_player, selec
     """Handle disambiguation selection (user picking which player they meant)"""
     from recent_mentions import check_recent_player_mentions
     from bot_logic import process_approved_question
+    from bot import question_map
     
     log_info(f"🎯 User disambiguated to: {selected_player['name']} ({selected_player['team']})")
     
@@ -184,7 +185,8 @@ async def handle_disambiguation_selection(reaction, user, selected_player, selec
             reaction.message.channel,
             user,
             modified_question,
-            selection_data["original_user_message"]
+            selection_data["original_user_message"],
+            question_map
         )
         
         log_info(f"🔧 DEBUG: Returning False (not blocked) for {selected_player['name']}")
