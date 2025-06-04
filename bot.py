@@ -270,12 +270,12 @@ async def ask_question(ctx, *, question: str = None):
                     return
                 else:
                     # True multi-player question - process all players
-                    await handle_multi_player_question(ctx, question, matched_players)
+                    await handle_multi_player_question(ctx, question, matched_players, question_map)
                     return
             
             # Handle single player
             else:
-                await handle_single_player_question(ctx, question, matched_players)
+                await handle_single_player_question(ctx, question, matched_players, question_map)
                 return
             
         elif fallback_recent_check:
