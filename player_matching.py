@@ -5,6 +5,7 @@ from difflib import SequenceMatcher
 from config import players_data
 from utils import normalize_name, expand_nicknames, is_likely_player_request
 from logging_system import log_analytics, log_info
+from player_matching_validator import validate_player_matches
 
 # -------- NAME EXTRACTION --------
 
@@ -382,12 +383,15 @@ def check_player_mentioned(text):
                 seen_players.add(player_key)
                 log_info(f"UNIQUE COMBO MATCH: Added {player['name']} ({player['team']})")
         
+        # Apply validation to combination matches
+        validated_combo_matches = validate_player_matches(text, unique_combo_matches)
+        
         duration_ms = int((datetime.now() - start_time).total_seconds() * 1000)
         asyncio.create_task(log_analytics("Player Search",
             question=text, duration_ms=duration_ms, players_checked=len(players_data),
-            matches_found=len(unique_combo_matches), players_found=unique_combo_matches, search_type="combination_match"
+            matches_found=len(validated_combo_matches), players_found=validated_combo_matches, search_type="combination_match_validated"
         ))
-        return unique_combo_matches
+        return validated_combo_matches
     
     # 🔧 STEP 2: Only test individual words if NO combinations matched
     log_info(f"COMBINATION MATCHING: No combination matches found, testing individual words")
@@ -535,14 +539,26 @@ def check_player_mentioned(text):
     
     # STEP 4: Fuzzy matching as final fallback
     matches = fuzzy_match_players(text, max_results=5)
-    duration_ms = int((datetime.now() - start_time).total_seconds() * 1000)
     
+    # Apply validation to fuzzy matches
     if matches:
-        asyncio.create_task(log_analytics("Player Search",
-            question=text, duration_ms=duration_ms, players_checked=len(players_data),
-            matches_found=len(matches), players_found=matches, search_type="fuzzy_match"
-        ))
-        return matches
+        validated_matches = validate_player_matches(text, matches)
+        duration_ms = int((datetime.now() - start_time).total_seconds() * 1000)
+        
+        if validated_matches:
+            asyncio.create_task(log_analytics("Player Search",
+                question=text, duration_ms=duration_ms, players_checked=len(players_data),
+                matches_found=len(validated_matches), players_found=validated_matches, search_type="fuzzy_match_validated"
+            ))
+            return validated_matches
+        else:
+            # All fuzzy matches were rejected by validation
+            asyncio.create_task(log_analytics("Player Search",
+                question=text, duration_ms=duration_ms, players_checked=len(players_data),
+                matches_found=0, search_type="fuzzy_match_all_rejected"
+            ))
+    else:
+        duration_ms = int((datetime.now() - start_time).total_seconds() * 1000)
     
     # Log failed search
     asyncio.create_task(log_analytics("Player Search",

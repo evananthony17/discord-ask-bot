@@ -4,6 +4,136 @@ from datetime import datetime, timedelta, timezone
 from config import FINAL_ANSWER_CHANNEL, ANSWERING_CHANNEL, RECENT_MENTION_HOURS, RECENT_MENTION_LIMIT
 from utils import normalize_name
 from logging_system import log_error, log_info
+from player_matching_validator import validate_player_matches
+
+# -------- ENHANCED MESSAGE PARSING FUNCTIONS --------
+
+def parse_final_answer_sections(message_content):
+    """
+    Parse final answer message into sections to prioritize expert reply content
+    Returns: {
+        'expert_reply': str,      # Clean expert answer content (highest priority)
+        'question_content': str,  # Question without metadata (medium priority) 
+        'metadata': str,          # [Players: ...] sections (lowest priority)
+        'full_message': str       # Fallback to full message
+    }
+    """
+    try:
+        # Initialize sections
+        sections = {
+            'expert_reply': '',
+            'question_content': '',
+            'metadata': '',
+            'full_message': message_content
+        }
+        
+        # Split message by the standard pattern: **Expert** replied:
+        expert_reply_pattern = r'\*\*([^*]+)\*\* replied:\s*'
+        expert_match = re.search(expert_reply_pattern, message_content, re.IGNORECASE)
+        
+        if expert_match:
+            # Extract question section (everything before expert reply)
+            question_section = message_content[:expert_match.start()].strip()
+            
+            # Extract expert reply section (everything after "replied:")
+            expert_reply_raw = message_content[expert_match.end():].strip()
+            
+            # Clean expert reply: remove correction footer if present
+            correction_pattern = r'\*This answer was corrected by [^*]+\*\s*$'
+            expert_reply_clean = re.sub(correction_pattern, '', expert_reply_raw, flags=re.IGNORECASE).strip()
+            
+            # Remove any trailing "-----" markers
+            expert_reply_clean = re.sub(r'-+\s*$', '', expert_reply_clean).strip()
+            
+            sections['expert_reply'] = expert_reply_clean
+            
+            # Parse question section to separate content from metadata
+            if question_section:
+                # Extract [Players: ...] metadata from question
+                metadata_pattern = r'\[Players?:[^\]]+\]'
+                metadata_matches = re.findall(metadata_pattern, question_section, re.IGNORECASE)
+                sections['metadata'] = ' '.join(metadata_matches)
+                
+                # Remove metadata from question to get clean question content
+                question_clean = re.sub(metadata_pattern, '', question_section, flags=re.IGNORECASE)
+                # Also remove the "**Question:**" header and user mention
+                question_clean = re.sub(r'\*\*Question:\*\*\s*', '', question_clean, flags=re.IGNORECASE)
+                question_clean = re.sub(r'<@\d+>\s*asked:\s*', '', question_clean, flags=re.IGNORECASE)
+                sections['question_content'] = question_clean.strip()
+            
+            log_info(f"MESSAGE PARSING: Successfully parsed message sections")
+            log_info(f"MESSAGE PARSING: Expert reply length: {len(sections['expert_reply'])}")
+            log_info(f"MESSAGE PARSING: Question content length: {len(sections['question_content'])}")
+            log_info(f"MESSAGE PARSING: Metadata length: {len(sections['metadata'])}")
+            
+        else:
+            # No clear expert reply structure found, treat as legacy format
+            log_info(f"MESSAGE PARSING: No expert reply pattern found, using full message")
+            sections['expert_reply'] = message_content
+            sections['question_content'] = message_content
+        
+        return sections
+        
+    except Exception as e:
+        log_error(f"ERROR in parse_final_answer_sections: {e}")
+        # Fallback to treating entire message as expert reply
+        return {
+            'expert_reply': message_content,
+            'question_content': message_content,
+            'metadata': '',
+            'full_message': message_content
+        }
+
+def check_player_in_message_sections(player_name_normalized, player_uuid, sections, message_author_name=None):
+    """
+    Check for player mentions across message sections with weighted priority
+    Returns: (is_match, match_type, confidence_score, section_found)
+    """
+    try:
+        # PRIORITY 1: Check expert reply section (highest confidence)
+        if sections['expert_reply']:
+            expert_normalized = normalize_name(sections['expert_reply'])
+            is_match, match_type, confidence = check_player_mention_hierarchical(
+                player_name_normalized, player_uuid, expert_normalized, sections['expert_reply'], message_author_name
+            )
+            if is_match:
+                log_info(f"SECTION MATCH: Found {player_name_normalized} in EXPERT REPLY ({match_type}, confidence: {confidence})")
+                return True, f"expert_reply_{match_type}", confidence, "expert_reply"
+        
+        # PRIORITY 2: Check question content (medium confidence)
+        if sections['question_content']:
+            question_normalized = normalize_name(sections['question_content'])
+            is_match, match_type, confidence = check_player_mention_hierarchical(
+                player_name_normalized, player_uuid, question_normalized, sections['question_content'], message_author_name
+            )
+            if is_match:
+                # Reduce confidence for question-only matches
+                reduced_confidence = confidence * 0.5
+                log_info(f"SECTION MATCH: Found {player_name_normalized} in QUESTION CONTENT ({match_type}, confidence: {reduced_confidence})")
+                return True, f"question_{match_type}", reduced_confidence, "question_content"
+        
+        # PRIORITY 3: Check metadata (lowest confidence)
+        if sections['metadata']:
+            metadata_normalized = normalize_name(sections['metadata'])
+            is_match, match_type, confidence = check_player_mention_hierarchical(
+                player_name_normalized, player_uuid, metadata_normalized, sections['metadata'], message_author_name
+            )
+            if is_match:
+                # Significantly reduce confidence for metadata-only matches
+                reduced_confidence = confidence * 0.2
+                log_info(f"SECTION MATCH: Found {player_name_normalized} in METADATA ({match_type}, confidence: {reduced_confidence})")
+                return True, f"metadata_{match_type}", reduced_confidence, "metadata"
+        
+        # No match found in any section
+        return False, "no_match", 0.0, "none"
+        
+    except Exception as e:
+        log_error(f"ERROR in check_player_in_message_sections: {e}")
+        # Fallback to full message check
+        full_normalized = normalize_name(sections['full_message'])
+        return check_player_mention_hierarchical(
+            player_name_normalized, player_uuid, full_normalized, sections['full_message'], message_author_name
+        ) + ("fallback",)
 
 # -------- HIERARCHICAL MATCHING FUNCTIONS --------
 
@@ -59,7 +189,7 @@ def clean_message_content_for_scanning(message_content, message_author_name):
 
 def check_player_mention_hierarchical(player_name_normalized, player_uuid, message_normalized, message_content, message_author_name=None):
     """
-    Hierarchical matching from most specific to least specific
+    Enhanced hierarchical matching with phrase validation
     Returns: (is_match, match_type, confidence_score)
     """
     
@@ -81,7 +211,14 @@ def check_player_mention_hierarchical(player_name_normalized, player_uuid, messa
         # LEVEL 1: EXACT full name match (highest confidence = 1.0)
         exact_pattern = f"\\b{re.escape(player_name_normalized)}\\b"
         if re.search(exact_pattern, scanning_normalized):
-            return True, "exact_full_name", 1.0
+            # Apply phrase validation even to exact matches to catch false positives
+            mock_player = {'name': player_name_normalized, 'team': 'Unknown'}
+            validated_matches = validate_player_matches(scanning_normalized, [mock_player])
+            if validated_matches:
+                return True, "exact_full_name_validated", 1.0
+            else:
+                log_info(f"RECENT MENTION VALIDATION: Exact match for '{player_name_normalized}' rejected by phrase validation")
+                return False, "exact_full_name_rejected", 0.0
         
         # LEVEL 2: Full name in [Players: ...] list (high confidence = 0.9)
         players_section_pattern = r'\[players:(.*?)\]'
@@ -90,18 +227,32 @@ def check_player_mention_hierarchical(player_name_normalized, player_uuid, messa
             players_text = players_match.group(1)
             player_in_list_pattern = f"\\b{re.escape(player_name_normalized)}\\b"
             if re.search(player_in_list_pattern, players_text):
-                return True, "players_list", 0.9
+                # Players list matches are generally safe, but still validate
+                mock_player = {'name': player_name_normalized, 'team': 'Unknown'}
+                validated_matches = validate_player_matches(players_text, [mock_player])
+                if validated_matches:
+                    return True, "players_list_validated", 0.9
+                else:
+                    log_info(f"RECENT MENTION VALIDATION: Players list match for '{player_name_normalized}' rejected by phrase validation")
+                    return False, "players_list_rejected", 0.0
         
-        # LEVEL 3: Last name with team context validation (medium confidence = 0.7)
+        # LEVEL 3: Last name with enhanced validation (medium confidence = 0.7)
         if ' ' in player_name_normalized:
             lastname = player_name_normalized.split()[-1]
             lastname_pattern = f"\\b{re.escape(lastname)}\\b"
             if re.search(lastname_pattern, scanning_normalized):
-                # Context validation: check if this looks like a baseball context
+                # Enhanced validation: baseball context + phrase validation
                 if validate_baseball_context(scanning_normalized, lastname):
-                    return True, "lastname_with_context", 0.7
+                    # Additional phrase validation for lastname matches
+                    mock_player = {'name': player_name_normalized, 'team': 'Unknown'}
+                    validated_matches = validate_player_matches(scanning_normalized, [mock_player])
+                    if validated_matches:
+                        return True, "lastname_with_context_validated", 0.7
+                    else:
+                        log_info(f"RECENT MENTION VALIDATION: Lastname match for '{lastname}' rejected by phrase validation")
+                        return False, "lastname_context_rejected", 0.0
         
-        # LEVEL 4: First name with additional validation (lower confidence = 0.6)
+        # LEVEL 4: First name with enhanced validation (lower confidence = 0.6)
         if ' ' in player_name_normalized:
             firstname = player_name_normalized.split()[0]
             # Only for distinctive first names (length >= 5 to avoid common names like "mike", "john")
@@ -109,7 +260,14 @@ def check_player_mention_hierarchical(player_name_normalized, player_uuid, messa
                 firstname_pattern = f"\\b{re.escape(firstname)}\\b"
                 if re.search(firstname_pattern, scanning_normalized):
                     if validate_baseball_context(scanning_normalized, firstname):
-                        return True, "firstname_with_context", 0.6
+                        # Additional phrase validation for firstname matches
+                        mock_player = {'name': player_name_normalized, 'team': 'Unknown'}
+                        validated_matches = validate_player_matches(scanning_normalized, [mock_player])
+                        if validated_matches:
+                            return True, "firstname_with_context_validated", 0.6
+                        else:
+                            log_info(f"RECENT MENTION VALIDATION: Firstname match for '{firstname}' rejected by phrase validation")
+                            return False, "firstname_context_rejected", 0.0
         
         # LEVEL 5: No match
         return False, "no_match", 0.0
@@ -219,66 +377,77 @@ async def check_recent_player_mentions(guild, players_to_check):
             except Exception as e:
                 log_error(f"RECENT MENTION CHECK: Error checking answering channel: {e}")
         
-        # STEP 2: ONLY if found in question-reposting, THEN check answered-by-expert
-        status = None
+        # STEP 2: ALWAYS check final answer channel (regardless of answering channel result)
+        found_in_final = False
         answer_message_url = None
-        if found_in_answering:
-            log_info(f"RECENT MENTION CHECK: {player['name']} found in question-reposting, now checking answered-by-expert")
-            
-            # Check final answer channel for BOT messages only
-            found_in_final = False
-            if final_channel:
-                try:
-                    message_count = 0
-                    async for message in final_channel.history(after=time_threshold, limit=RECENT_MENTION_LIMIT):
-                        message_count += 1
-                        # Only check messages from the bot itself
-                        if message.author == guild.me:  # guild.me is the bot
-                            message_normalized = normalize_name(message.content)
+        if final_channel:
+            try:
+                message_count = 0
+                async for message in final_channel.history(after=time_threshold, limit=RECENT_MENTION_LIMIT):
+                    message_count += 1
+                    # Only check messages from the bot itself
+                    if message.author == guild.me:  # guild.me is the bot
+                        message_normalized = normalize_name(message.content)
+                        
+                        # 🔧 ENHANCED: Use new section-based parsing for final answer messages
+                        try:
+                            # Parse message into sections
+                            sections = parse_final_answer_sections(message.content)
                             
-                            # 🔧 FIXED: Add error handling for hierarchical matching
-                            try:
-                                is_match, match_type, confidence = check_player_mention_hierarchical(
-                                    player_name_normalized, player_uuid, message_normalized, message.content,
-                                    message_author_name=message.author.display_name
-                                )
-                                
-                                if is_match:
-                                    log_info(f"RECENT MENTION CHECK: Found {player['name']} in bot message in final channel ({match_type}, confidence: {confidence})")
-                                    log_info(f"RECENT MENTION CHECK: Match details - player_normalized: '{player_name_normalized}', message_snippet: '{message_normalized[:100]}...'")
+                            # Use enhanced section-based matching
+                            is_match, match_type, confidence, section_found = check_player_in_message_sections(
+                                player_name_normalized, player_uuid, sections, message.author.display_name
+                            )
+                            
+                            if is_match:
+                                # Apply confidence threshold - only count as "answered" if found in expert reply
+                                if section_found == "expert_reply" and confidence >= 0.7:
+                                    log_info(f"RECENT MENTION CHECK: Found {player['name']} in EXPERT REPLY in final channel ({match_type}, confidence: {confidence})")
                                     found_in_final = True
-                                    answer_message_url = message.jump_url  # 🔧 CAPTURE THE ANSWER MESSAGE URL
+                                    answer_message_url = message.jump_url
                                     
                                     # BYPASS WEBHOOK - Direct Discord message for debugging
                                     try:
                                         logs_channel = discord.utils.get(guild.text_channels, name="bernie-stock-logs")
                                         if logs_channel:
-                                            await logs_channel.send(f"🔧 **DEBUG**: found_in_final = True for {player['name']}")
+                                            await logs_channel.send(f"🔧 **DEBUG**: found_in_final = True for {player['name']} (expert reply)")
                                     except:
-                                        pass  # Don't let debug messages break the bot
+                                        pass
                                     
                                     break
-                            except Exception as e:
-                                log_error(f"ERROR in hierarchical matching for message in final channel: {e}")
-                                continue
-                                
-                    log_info(f"RECENT MENTION CHECK: Checked {message_count} messages in final channel")
-                except Exception as e:
-                    log_error(f"RECENT MENTION CHECK: Error checking final channel: {e}")
-            
-            # Determine status based on your vision:
-            # Found in question-reposting + found in answered = "answered"
-            # Found in question-reposting + NOT found in answered = "pending"
-            if found_in_final:
-                status = "answered"  # Asked and answered
-                log_info(f"RECENT MENTION CHECK: {player['name']} found in both channels - status: answered")
-                log_info(f"RECENT MENTION CHECK: Answer URL captured: {answer_message_url}")
-            else:
-                status = "pending"   # Asked but not answered yet
-                log_info(f"RECENT MENTION CHECK: {player['name']} found in question-reposting but not answered - status: pending")
+                                else:
+                                    # Found in question/metadata but not expert reply - don't count as answered
+                                    log_info(f"RECENT MENTION CHECK: Found {player['name']} in {section_found} but not expert reply (confidence: {confidence}) - not counting as answered")
+                                    
+                                    # BYPASS WEBHOOK - Direct Discord message for debugging
+                                    try:
+                                        logs_channel = discord.utils.get(guild.text_channels, name="bernie-stock-logs")
+                                        if logs_channel:
+                                            await logs_channel.send(f"🔧 **DEBUG**: {player['name']} found in {section_found} but not expert reply - ignoring")
+                                    except:
+                                        pass
+                        except Exception as e:
+                            log_error(f"ERROR in hierarchical matching for message in final channel: {e}")
+                            continue
+                            
+                log_info(f"RECENT MENTION CHECK: Checked {message_count} messages in final channel")
+            except Exception as e:
+                log_error(f"RECENT MENTION CHECK: Error checking final channel: {e}")
+        
+        # STEP 3: Determine status with correct priority logic
+        status = None
+        if found_in_final:
+            # Priority: If found in final channel = answered (with URL)
+            status = "answered"
+            log_info(f"RECENT MENTION CHECK: {player['name']} found in final channel - status: answered")
+            log_info(f"RECENT MENTION CHECK: Answer URL captured: {answer_message_url}")
+        elif found_in_answering:
+            # If found only in answering channel = pending
+            status = "pending"
+            log_info(f"RECENT MENTION CHECK: {player['name']} found only in answering channel - status: pending")
         else:
-            log_info(f"RECENT MENTION CHECK: {player['name']} NOT FOUND in question-reposting channel - skipping answered-by-expert check")
-            # status remains None - no recent mention, no need to check final channel
+            log_info(f"RECENT MENTION CHECK: {player['name']} NOT FOUND in either channel - approved")
+            # status remains None - no recent mention, question is approved
         
         # BYPASS WEBHOOK - Direct Discord message for status processing
         try:
@@ -348,7 +517,7 @@ async def check_recent_player_mentions(guild, players_to_check):
 # -------- FALLBACK RECENT MENTIONS CHECK --------
 
 async def check_fallback_recent_mentions(guild, potential_player_words):
-    """Fallback check for recent mentions using potential player words"""
+    """Enhanced fallback check for recent mentions using potential player words with validation"""
     time_threshold = datetime.now(timezone.utc) - timedelta(hours=RECENT_MENTION_HOURS)
     
     answering_channel = discord.utils.get(guild.text_channels, name=ANSWERING_CHANNEL)
@@ -362,8 +531,14 @@ async def check_fallback_recent_mentions(guild, potential_player_words):
                     if message.author == guild.me:
                         message_normalized = normalize_name(message.content)
                         if word in message_normalized:
-                            log_info(f"FALLBACK: Found '{word}' in recent bot message in answering channel")
-                            return True
+                            # Apply phrase validation to fallback matches
+                            mock_player = {'name': word, 'team': 'Unknown'}
+                            validated_matches = validate_player_matches(message_normalized, [mock_player])
+                            if validated_matches:
+                                log_info(f"FALLBACK: Found '{word}' in recent bot message in answering channel (validated)")
+                                return True
+                            else:
+                                log_info(f"FALLBACK VALIDATION: Word '{word}' found but rejected by phrase validation")
             except Exception as e:
                 log_error(f"FALLBACK: Error checking answering channel: {e}")
         
@@ -374,8 +549,14 @@ async def check_fallback_recent_mentions(guild, potential_player_words):
                     if message.author == guild.me:
                         message_normalized = normalize_name(message.content)
                         if word in message_normalized:
-                            log_info(f"FALLBACK: Found '{word}' in recent bot message in final channel")
-                            return True
+                            # Apply phrase validation to fallback matches
+                            mock_player = {'name': word, 'team': 'Unknown'}
+                            validated_matches = validate_player_matches(message_normalized, [mock_player])
+                            if validated_matches:
+                                log_info(f"FALLBACK: Found '{word}' in recent bot message in final channel (validated)")
+                                return True
+                            else:
+                                log_info(f"FALLBACK VALIDATION: Word '{word}' found but rejected by phrase validation")
             except Exception as e:
                 log_error(f"FALLBACK: Error checking final channel: {e}")
     
