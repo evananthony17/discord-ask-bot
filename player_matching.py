@@ -435,12 +435,15 @@ def check_player_mentioned(text):
         
         log_info(f"INDIVIDUAL MATCHING: Found {len(unique_individual_matches)} total matches from individual words")
         
+        # Apply validation to individual matches
+        validated_individual_matches = validate_player_matches(text, unique_individual_matches)
+
         duration_ms = int((datetime.now() - start_time).total_seconds() * 1000)
         asyncio.create_task(log_analytics("Player Search",
             question=text, duration_ms=duration_ms, players_checked=len(players_data),
-            matches_found=len(unique_individual_matches), players_found=unique_individual_matches, search_type="individual_word_match"
+            matches_found=len(validated_individual_matches), players_found=validated_individual_matches, search_type="individual_word_match_validated"
         ))
-        return unique_individual_matches
+        return validated_individual_matches
     
     log_info(f"INDIVIDUAL WORDS: No matches found from individual words, testing full text as fallback")
     

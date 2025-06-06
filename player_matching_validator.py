@@ -46,7 +46,15 @@ def detect_validation_context(text):
         return CONTEXT_EXPERT_REPLY
     
     # Check for user question context
+    if '?' in text:
+        return CONTEXT_USER_QUESTION
+
+    # Check for other question indicators
     if any(indicator in text_lower for indicator in question_indicators):
+        return CONTEXT_USER_QUESTION
+
+    # For short texts (likely user questions), default to user question context
+    if len(text.split()) <= 15:
         return CONTEXT_USER_QUESTION
     
     # Default to unknown context (will use moderate validation)
