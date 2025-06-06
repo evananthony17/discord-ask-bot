@@ -1,8 +1,9 @@
 # Updated bot_logic.py for question_map change
 
 import discord
+import asyncio
 from config import ANSWERING_CHANNEL, FINAL_ANSWER_LINK
-from logging_system import log_error, log_analytics
+from logging_system import log_error, log_analytics, log_info, log_success
 from question_map_store import load_question_map, save_question_map, append_question
 
 # -------- MULTI-PLAYER QUESTION PROCESSING --------
@@ -199,6 +200,38 @@ async def process_approved_question(channel, user, question, original_message=No
         log_error(f"Could not find #{ANSWERING_CHANNEL}")
         error_msg = await channel.send(f"❌ Could not find #{ANSWERING_CHANNEL}")
         await error_msg.delete(delay=5)
+
+async def schedule_answered_message_cleanup(original_message, reply_message, delay_seconds=15):
+    """Schedule deletion of answered question and expert reply after specified delay"""
+    try:
+        log_info(f"AUTO-DELETE: Scheduled cleanup for question {original_message.id} and reply {reply_message.id} in {delay_seconds}s")
+        
+        await asyncio.sleep(delay_seconds)
+        
+        # Delete both messages
+        deleted_count = 0
+        try:
+            await original_message.delete()
+            deleted_count += 1
+            log_info(f"AUTO-DELETE: Deleted question {original_message.id}")
+        except discord.NotFound:
+            log_info(f"AUTO-DELETE: Question {original_message.id} already deleted")
+        except Exception as e:
+            log_error(f"AUTO-DELETE: Failed to delete question {original_message.id}: {e}")
+        
+        try:
+            await reply_message.delete()  
+            deleted_count += 1
+            log_info(f"AUTO-DELETE: Deleted reply {reply_message.id}")
+        except discord.NotFound:
+            log_info(f"AUTO-DELETE: Reply {reply_message.id} already deleted")
+        except Exception as e:
+            log_error(f"AUTO-DELETE: Failed to delete reply {reply_message.id}: {e}")
+            
+        log_success(f"AUTO-DELETE: Cleanup completed - {deleted_count}/2 messages deleted")
+        
+    except Exception as e:
+        log_error(f"AUTO-DELETE: Unexpected error: {e}")
 
 # -------- QUESTION FALLBACK CHECK --------
 

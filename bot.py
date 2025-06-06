@@ -18,7 +18,7 @@ from validation import validate_question
 from player_matching import check_player_mentioned
 from recent_mentions import check_recent_player_mentions, check_fallback_recent_mentions
 from selection_handlers import start_selection_timeout, cancel_selection_timeout, handle_disambiguation_selection, handle_block_selection, cleanup_invalid_selection
-from bot_logic import process_approved_question, get_potential_player_words, handle_multi_player_question, handle_single_player_question
+from bot_logic import process_approved_question, get_potential_player_words, handle_multi_player_question, handle_single_player_question, schedule_answered_message_cleanup
 
 # -------- PERSISTENT QUESTION_ID STORAGE --------
 question_map = load_question_map()
@@ -197,6 +197,8 @@ async def on_message(message):
                 
                 if updated_content != original_content:
                     await fresh_message.edit(content=updated_content)
+                    asyncio.create_task(schedule_answered_message_cleanup(fresh_message, message))
+
             except Exception as e:
                 log_error(f"Failed to edit original message: {e}")
     
