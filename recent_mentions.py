@@ -211,14 +211,14 @@ def check_player_mention_hierarchical(player_name_normalized, player_uuid, messa
         # LEVEL 1: EXACT full name match (highest confidence = 1.0)
         exact_pattern = f"\\b{re.escape(player_name_normalized)}\\b"
         if re.search(exact_pattern, scanning_normalized):
-                            # Apply phrase validation even to exact matches to catch false positives
-                            mock_player = {'name': player_name_normalized, 'team': 'Unknown'}
-                            validated_matches = validate_player_matches(scanning_normalized, [mock_player], context="expert_reply")
-                            if validated_matches:
-                                return True, "exact_full_name_validated", 1.0
-                            else:
-                                log_info(f"RECENT MENTION VALIDATION: Exact match for '{player_name_normalized}' rejected by phrase validation")
-                                return False, "exact_full_name_rejected", 0.0
+            # Apply phrase validation even to exact matches to catch false positives
+            mock_player = {'name': player_name_normalized, 'team': 'Unknown'}
+            validated_matches = validate_player_matches(scanning_normalized, [mock_player], context="expert_reply")
+            if validated_matches:
+                return True, "exact_full_name_validated", 1.0
+            else:
+                log_info(f"RECENT MENTION VALIDATION: Exact match for '{player_name_normalized}' rejected by phrase validation")
+                return False, "exact_full_name_rejected", 0.0
         
         # LEVEL 2: Full name in [Players: ...] list (high confidence = 0.9)
         players_section_pattern = r'\[players:(.*?)\]'
@@ -359,15 +359,6 @@ async def check_recent_player_mentions(guild, players_to_check):
                                 log_info(f"RECENT MENTION CHECK: Match details - player_normalized: '{player_name_normalized}', message_snippet: '{message_normalized[:100]}...'")
                                 found_in_answering = True
                                 answering_message_url = message.jump_url  # 🔧 CAPTURE THE MESSAGE URL
-                                
-                                # BYPASS WEBHOOK - Direct Discord message for debugging
-                                try:
-                                    logs_channel = discord.utils.get(guild.text_channels, name="bernie-stock-logs")
-                                    if logs_channel:
-                                        await logs_channel.send(f"🔧 **DEBUG**: found_in_answering = True for {player['name']}")
-                                except:
-                                    pass  # Don't let debug messages break the bot
-                                
                                 break
                         except Exception as e:
                             log_error(f"ERROR in hierarchical matching for message in answering channel: {e}")
@@ -377,7 +368,7 @@ async def check_recent_player_mentions(guild, players_to_check):
             except Exception as e:
                 log_error(f"RECENT MENTION CHECK: Error checking answering channel: {e}")
         
-        # STEP 2: ALWAYS check final answer channel (regardless of answering channel result)
+        # STEP 2: Check final answer channel - ONLY check expert reply sections
         found_in_final = False
         answer_message_url = None
         if final_channel:
@@ -389,7 +380,7 @@ async def check_recent_player_mentions(guild, players_to_check):
                     if message.author == guild.me:  # guild.me is the bot
                         message_normalized = normalize_name(message.content)
                         
-                        # 🔧 ENHANCED: Use new section-based parsing for final answer messages
+                        # 🔧 UPDATED: Use section-based parsing for final answer messages
                         try:
                             # Parse message into sections
                             sections = parse_final_answer_sections(message.content)
@@ -400,32 +391,17 @@ async def check_recent_player_mentions(guild, players_to_check):
                             )
                             
                             if is_match:
-                                # Apply confidence threshold - only count as "answered" if found in expert reply
+                                # 🔧 NEW LOGIC: Only count as "answered" if found in expert reply section
                                 if section_found == "expert_reply" and confidence >= 0.7:
                                     log_info(f"RECENT MENTION CHECK: Found {player['name']} in EXPERT REPLY in final channel ({match_type}, confidence: {confidence})")
                                     found_in_final = True
                                     answer_message_url = message.jump_url
-                                    
-                                    # BYPASS WEBHOOK - Direct Discord message for debugging
-                                    try:
-                                        logs_channel = discord.utils.get(guild.text_channels, name="bernie-stock-logs")
-                                        if logs_channel:
-                                            await logs_channel.send(f"🔧 **DEBUG**: found_in_final = True for {player['name']} (expert reply)")
-                                    except:
-                                        pass
-                                    
                                     break
                                 else:
-                                    # Found in question/metadata but not expert reply - don't count as answered
-                                    log_info(f"RECENT MENTION CHECK: Found {player['name']} in {section_found} but not expert reply (confidence: {confidence}) - not counting as answered")
+                                    # 🔧 KEY CHANGE: Found in question/metadata but NOT in expert reply - allow future questions
+                                    log_info(f"RECENT MENTION CHECK: Found {player['name']} in {section_found} but NOT in expert reply - allowing future questions")
+                                    # Don't set found_in_final = True, so this won't block future questions
                                     
-                                    # BYPASS WEBHOOK - Direct Discord message for debugging
-                                    try:
-                                        logs_channel = discord.utils.get(guild.text_channels, name="bernie-stock-logs")
-                                        if logs_channel:
-                                            await logs_channel.send(f"🔧 **DEBUG**: {player['name']} found in {section_found} but not expert reply - ignoring")
-                                    except:
-                                        pass
                         except Exception as e:
                             log_error(f"ERROR in hierarchical matching for message in final channel: {e}")
                             continue
@@ -434,40 +410,26 @@ async def check_recent_player_mentions(guild, players_to_check):
             except Exception as e:
                 log_error(f"RECENT MENTION CHECK: Error checking final channel: {e}")
         
-        # STEP 3: Determine status with correct priority logic
+        # STEP 3: Determine status with updated logic
         status = None
         if found_in_final:
-            # Priority: If found in final channel = answered (with URL)
+            # Only set to "answered" if found in expert reply section
             status = "answered"
-            log_info(f"RECENT MENTION CHECK: {player['name']} found in final channel - status: answered")
+            log_info(f"RECENT MENTION CHECK: {player['name']} found in expert reply - status: answered")
             log_info(f"RECENT MENTION CHECK: Answer URL captured: {answer_message_url}")
         elif found_in_answering:
             # If found only in answering channel = pending
             status = "pending"
             log_info(f"RECENT MENTION CHECK: {player['name']} found only in answering channel - status: pending")
         else:
-            log_info(f"RECENT MENTION CHECK: {player['name']} NOT FOUND in either channel - approved")
-            # status remains None - no recent mention, question is approved
-        
-        # BYPASS WEBHOOK - Direct Discord message for status processing
-        try:
-            logs_channel = discord.utils.get(guild.text_channels, name="bernie-stock-logs")
-            if logs_channel:
-                await logs_channel.send(f"🔧 **DEBUG**: Processing {player['name']} - answering: {found_in_answering}, final: {'checked' if found_in_answering else 'skipped'}")
-        except:
-            pass
-        
-        # BYPASS WEBHOOK - Direct Discord message for status result
-        try:
-            logs_channel = discord.utils.get(guild.text_channels, name="bernie-stock-logs")
-            if logs_channel:
-                await logs_channel.send(f"🔧 **DEBUG**: {player['name']} status determined: {status}")
-        except:
-            pass
-        
-        # Add to results if found (avoid duplicates by name+team)
+            # 🔧 NEW: No blocking status means question gets through
+            # This includes cases where player was mentioned in questions but not in expert replies
+            log_info(f"RECENT MENTION CHECK: {player['name']} NOT FOUND in expert replies or pending questions - allowing through")
+            # status remains None - no recent mention that should block
+
+        # Add to results only if there's a blocking status
         if status:
-            # Check if we already have this exact player (name + team) - NORMALIZED
+            # Check for duplicates
             already_added = False
             for existing in recent_mentions:
                 if (normalize_name(existing["player"]["name"]) == normalize_name(player["name"]) and 
@@ -477,39 +439,19 @@ async def check_recent_player_mentions(guild, players_to_check):
                     break
             
             if not already_added:
-                # 🔧 ENHANCED: Include message URLs in the return data
                 mention_data = {
                     "player": player,
                     "status": status,
-                    "answering_url": answering_message_url,  # URL to question in #question-reposting
+                    "answering_url": answering_message_url,
                 }
                 
-                # 🔧 ONLY include answer_url if status is "answered"
+                # Only include answer_url if status is "answered"
                 if status == "answered" and answer_message_url:
-                    mention_data["answer_url"] = answer_message_url  # URL to answer in #answered-by-expert
+                    mention_data["answer_url"] = answer_message_url
                 
                 recent_mentions.append(mention_data)
                 log_info(f"RECENT MENTION CHECK: Added recent mention: {player['name']} ({player['team']}) - {status}")
-                
-                # BYPASS WEBHOOK - Direct Discord message for adding to results
-                try:
-                    logs_channel = discord.utils.get(guild.text_channels, name="bernie-stock-logs")
-                    if logs_channel:
-                        await logs_channel.send(f"🔧 **DEBUG**: ADDED to results: {player['name']} ({player['team']}) - {status}")
-                        if status == "answered" and answer_message_url:
-                            await logs_channel.send(f"🔧 **DEBUG**: Answer URL: {answer_message_url}")
-                except:
-                    pass
-    
-    # BYPASS WEBHOOK - Direct Discord message for final result
-    try:
-        logs_channel = discord.utils.get(guild.text_channels, name="bernie-stock-logs")
-        if logs_channel:
-            await logs_channel.send(f"🔧 **DEBUG**: Final return - {len(recent_mentions)} mentions found")
-            for mention in recent_mentions:
-                await logs_channel.send(f"🔧 **DEBUG**: Returning player {mention['player']['name']} with status {mention['status']}")
-    except:
-        pass
+        # If status is None, player is not added to recent_mentions, so question will be allowed
     
     log_info(f"RECENT MENTION CHECK: Final result: {len(recent_mentions)} recent mentions found")
     return recent_mentions
