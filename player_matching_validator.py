@@ -4,10 +4,60 @@ from config import players_data
 from utils import normalize_name
 from logging_system import log_info
 
-def is_valid_player_name_phrase(phrase, matched_player_name):
+# Context types for validation
+CONTEXT_USER_QUESTION = "user_question"
+CONTEXT_EXPERT_REPLY = "expert_reply"
+CONTEXT_METADATA = "metadata"
+CONTEXT_UNKNOWN = "unknown"
+
+def detect_validation_context(text):
     """
-    Validate if a phrase actually looks like it could be referring to a player name
-    This catches false positives like "more like" matching to "Mike" + "Like"
+    Detect the context of the text to apply appropriate validation rules
+    Returns: context type (user_question, expert_reply, metadata, unknown)
+    """
+    text_lower = text.lower()
+    
+    # Expert reply indicators
+    expert_indicators = [
+        'replied:', 'answered:', 'response:', 'expert',
+        'in my opinion', 'i think', 'i believe', 'i would say',
+        'based on', 'according to', 'from what i see',
+        'looking at', 'considering', 'given that'
+    ]
+    
+    # Metadata indicators
+    metadata_indicators = [
+        '[players:', '[player:', 'players:', 'player:',
+        'team:', 'position:', 'stats:'
+    ]
+    
+    # User question indicators
+    question_indicators = [
+        'asked:', 'question:', '?', 'how is', 'what about',
+        'should i', 'can you', 'tell me about'
+    ]
+    
+    # Check for metadata context first (highest priority)
+    if any(indicator in text_lower for indicator in metadata_indicators):
+        return CONTEXT_METADATA
+    
+    # Check for expert reply context
+    if any(indicator in text_lower for indicator in expert_indicators):
+        return CONTEXT_EXPERT_REPLY
+    
+    # Check for user question context
+    if any(indicator in text_lower for indicator in question_indicators):
+        return CONTEXT_USER_QUESTION
+    
+    # Default to unknown context (will use moderate validation)
+    return CONTEXT_UNKNOWN
+
+def is_valid_player_name_phrase(phrase, matched_player_name, context=CONTEXT_UNKNOWN):
+    """
+    Context-aware validation of player name phrases
+    - Strict validation for user questions (prevents false positives)
+    - Relaxed validation for expert replies (allows natural language)
+    - Minimal validation for metadata (basic structure only)
     """
     phrase_normalized = normalize_name(phrase).lower()
     player_normalized = normalize_name(matched_player_name).lower()
@@ -16,10 +66,75 @@ def is_valid_player_name_phrase(phrase, matched_player_name):
     phrase_words = phrase_normalized.split()
     player_words = player_normalized.split()
     
-    log_info(f"VALIDATING: '{phrase}' → '{matched_player_name}'")
+    log_info(f"VALIDATING: '{phrase}' → '{matched_player_name}' (context: {context})")
     log_info(f"PHRASE WORDS: {phrase_words}")
     log_info(f"PLAYER WORDS: {player_words}")
     
+    # Apply context-specific validation rules
+    if context == CONTEXT_METADATA:
+        # Minimal validation for metadata - just basic structure
+        return validate_metadata_context(phrase_words, player_words, phrase, matched_player_name)
+    elif context == CONTEXT_EXPERT_REPLY:
+        # Relaxed validation for expert replies
+        return validate_expert_reply_context(phrase_words, player_words, phrase, matched_player_name, phrase_normalized, player_normalized)
+    else:
+        # Strict validation for user questions and unknown context
+        return validate_user_question_context(phrase_words, player_words, phrase, matched_player_name, phrase_normalized, player_normalized)
+
+def validate_metadata_context(phrase_words, player_words, phrase, matched_player_name):
+    """Minimal validation for metadata context"""
+    # For metadata, just check basic structure
+    if len(phrase_words) >= 1:
+        # At least one word should be reasonable length
+        if any(len(word) >= 2 for word in phrase_words):
+            log_info(f"METADATA VALIDATION PASSED: '{phrase}' → '{matched_player_name}'")
+            return True
+    
+    log_info(f"METADATA VALIDATION FAILED: '{phrase}' → '{matched_player_name}' - insufficient structure")
+    return False
+
+def validate_expert_reply_context(phrase_words, player_words, phrase, matched_player_name, phrase_normalized, player_normalized):
+    """Relaxed validation for expert replies"""
+    # Rule 1: Only reject the most obvious non-name patterns (much more permissive)
+    critical_non_name_patterns = [
+        # Only the most obvious false positives
+        r'\bmore like\b', r'\bless like\b', r'\bmuch like\b',
+        r'\bhow about\b', r'\bwhat about\b',
+        r'\bgoing to\b', r'\bwant to\b', r'\bneed to\b',
+        r'\bkind of\b', r'\bsort of\b', r'\btype of\b',
+        r'\bout of\b', r'\binstead of\b'
+    ]
+    
+    for pattern in critical_non_name_patterns:
+        if re.search(pattern, phrase_normalized):
+            log_info(f"EXPERT REPLY VALIDATION FAILED: Phrase '{phrase}' matches critical non-name pattern: {pattern}")
+            return False
+    
+    # Rule 2: More lenient word length requirements
+    if len(phrase_words) == 2:
+        word1, word2 = phrase_words
+        if len(word1) < 2 or len(word2) < 2:
+            log_info(f"EXPERT REPLY VALIDATION FAILED: Words too short: {word1}, {word2}")
+            return False
+    
+    # Rule 3: Lower similarity threshold for expert replies (0.4 instead of 0.6)
+    similarity = SequenceMatcher(None, phrase_normalized, player_normalized).ratio()
+    if len(phrase_words) >= 2 and similarity < 0.4:
+        log_info(f"EXPERT REPLY VALIDATION FAILED: Low similarity {similarity:.3f} for multi-word phrase")
+        return False
+    
+    # Rule 4: More lenient word matching
+    if len(phrase_words) >= 2:
+        phrase_words_in_player = sum(1 for word in phrase_words if word in player_words)
+        if phrase_words_in_player == 0 and similarity < 0.5:
+            log_info(f"EXPERT REPLY VALIDATION FAILED: No phrase words found in player name and low similarity")
+            return False
+    
+    log_info(f"EXPERT REPLY VALIDATION PASSED: '{phrase}' → '{matched_player_name}'")
+    return True
+
+def validate_user_question_context(phrase_words, player_words, phrase, matched_player_name, phrase_normalized, player_normalized):
+    """Strict validation for user questions (original logic)"""
     # Rule 1: Reject obvious non-name phrase patterns
     non_name_patterns = [
         # Common phrase patterns that aren't names
@@ -68,7 +183,7 @@ def is_valid_player_name_phrase(phrase, matched_player_name):
     
     for pattern in non_name_patterns:
         if re.search(pattern, phrase_normalized):
-            log_info(f"VALIDATION FAILED: Phrase '{phrase}' matches non-name pattern: {pattern}")
+            log_info(f"USER QUESTION VALIDATION FAILED: Phrase '{phrase}' matches non-name pattern: {pattern}")
             return False
     
     # Rule 2: Check if phrase has reasonable name structure
@@ -77,7 +192,7 @@ def is_valid_player_name_phrase(phrase, matched_player_name):
         
         # Both words should be reasonable name length
         if len(word1) < 2 or len(word2) < 2:
-            log_info(f"VALIDATION FAILED: Words too short: {word1}, {word2}")
+            log_info(f"USER QUESTION VALIDATION FAILED: Words too short: {word1}, {word2}")
             return False
         
         # Check for obvious non-name word combinations
@@ -107,7 +222,7 @@ def is_valid_player_name_phrase(phrase, matched_player_name):
         }
         
         if (word1, word2) in non_name_combos:
-            log_info(f"VALIDATION FAILED: Non-name combo detected: {word1}, {word2}")
+            log_info(f"USER QUESTION VALIDATION FAILED: Non-name combo detected: {word1}, {word2}")
             return False
     
     # Rule 3: Check similarity between phrase and player name
@@ -116,7 +231,7 @@ def is_valid_player_name_phrase(phrase, matched_player_name):
     
     # For multi-word phrases, require higher similarity
     if len(phrase_words) >= 2 and similarity < 0.6:
-        log_info(f"VALIDATION FAILED: Low similarity {similarity:.3f} for multi-word phrase")
+        log_info(f"USER QUESTION VALIDATION FAILED: Low similarity {similarity:.3f} for multi-word phrase")
         return False
     
     # Rule 4: Check if phrase words actually appear in player name
@@ -124,7 +239,7 @@ def is_valid_player_name_phrase(phrase, matched_player_name):
         # At least one word from the phrase should appear in the player name
         phrase_words_in_player = sum(1 for word in phrase_words if word in player_words)
         if phrase_words_in_player == 0:
-            log_info(f"VALIDATION FAILED: No phrase words found in player name")
+            log_info(f"USER QUESTION VALIDATION FAILED: No phrase words found in player name")
             return False
     
     # Rule 5: Check for common non-name words in the phrase
@@ -177,27 +292,38 @@ def is_valid_player_name_phrase(phrase, matched_player_name):
     # If phrase consists mostly of common non-name words, reject it
     non_name_word_count = sum(1 for word in phrase_words if word in common_non_name_words)
     if len(phrase_words) >= 2 and non_name_word_count >= len(phrase_words) - 1:
-        log_info(f"VALIDATION FAILED: Phrase consists mostly of non-name words")
+        log_info(f"USER QUESTION VALIDATION FAILED: Phrase consists mostly of non-name words")
         return False
     
-    log_info(f"VALIDATION PASSED: '{phrase}' → '{matched_player_name}'")
+    log_info(f"USER QUESTION VALIDATION PASSED: '{phrase}' → '{matched_player_name}'")
     return True
 
-def validate_player_matches(text, matches):
+def validate_player_matches(text, matches, context=None):
     """
-    Filter out false positive matches using phrase validation
+    Context-aware filtering of false positive matches using phrase validation
+    
+    Args:
+        text: The text being validated
+        matches: List of player matches to validate
+        context: Optional context hint (user_question, expert_reply, metadata)
     """
     if not matches:
         return matches
     
+    # Auto-detect context if not provided
+    if context is None:
+        context = detect_validation_context(text)
+    
+    log_info(f"VALIDATION: Processing {len(matches)} matches with context: {context}")
+    
     validated_matches = []
     
     for player in matches:
-        if is_valid_player_name_phrase(text, player['name']):
+        if is_valid_player_name_phrase(text, player['name'], context):
             validated_matches.append(player)
-            log_info(f"MATCH VALIDATED: {player['name']} ({player['team']})")
+            log_info(f"MATCH VALIDATED: {player['name']} ({player['team']}) in {context} context")
         else:
-            log_info(f"MATCH REJECTED: {player['name']} ({player['team']}) - failed validation")
+            log_info(f"MATCH REJECTED: {player['name']} ({player['team']}) - failed {context} validation")
     
-    log_info(f"VALIDATION SUMMARY: {len(matches)} → {len(validated_matches)} matches")
+    log_info(f"VALIDATION SUMMARY: {len(matches)} → {len(validated_matches)} matches (context: {context})")
     return validated_matches

@@ -211,14 +211,14 @@ def check_player_mention_hierarchical(player_name_normalized, player_uuid, messa
         # LEVEL 1: EXACT full name match (highest confidence = 1.0)
         exact_pattern = f"\\b{re.escape(player_name_normalized)}\\b"
         if re.search(exact_pattern, scanning_normalized):
-            # Apply phrase validation even to exact matches to catch false positives
-            mock_player = {'name': player_name_normalized, 'team': 'Unknown'}
-            validated_matches = validate_player_matches(scanning_normalized, [mock_player])
-            if validated_matches:
-                return True, "exact_full_name_validated", 1.0
-            else:
-                log_info(f"RECENT MENTION VALIDATION: Exact match for '{player_name_normalized}' rejected by phrase validation")
-                return False, "exact_full_name_rejected", 0.0
+                            # Apply phrase validation even to exact matches to catch false positives
+                            mock_player = {'name': player_name_normalized, 'team': 'Unknown'}
+                            validated_matches = validate_player_matches(scanning_normalized, [mock_player], context="expert_reply")
+                            if validated_matches:
+                                return True, "exact_full_name_validated", 1.0
+                            else:
+                                log_info(f"RECENT MENTION VALIDATION: Exact match for '{player_name_normalized}' rejected by phrase validation")
+                                return False, "exact_full_name_rejected", 0.0
         
         # LEVEL 2: Full name in [Players: ...] list (high confidence = 0.9)
         players_section_pattern = r'\[players:(.*?)\]'
@@ -229,7 +229,7 @@ def check_player_mention_hierarchical(player_name_normalized, player_uuid, messa
             if re.search(player_in_list_pattern, players_text):
                 # Players list matches are generally safe, but still validate
                 mock_player = {'name': player_name_normalized, 'team': 'Unknown'}
-                validated_matches = validate_player_matches(players_text, [mock_player])
+                validated_matches = validate_player_matches(players_text, [mock_player], context="metadata")
                 if validated_matches:
                     return True, "players_list_validated", 0.9
                 else:
@@ -245,7 +245,7 @@ def check_player_mention_hierarchical(player_name_normalized, player_uuid, messa
                 if validate_baseball_context(scanning_normalized, lastname):
                     # Additional phrase validation for lastname matches
                     mock_player = {'name': player_name_normalized, 'team': 'Unknown'}
-                    validated_matches = validate_player_matches(scanning_normalized, [mock_player])
+                    validated_matches = validate_player_matches(scanning_normalized, [mock_player], context="expert_reply")
                     if validated_matches:
                         return True, "lastname_with_context_validated", 0.7
                     else:
@@ -262,7 +262,7 @@ def check_player_mention_hierarchical(player_name_normalized, player_uuid, messa
                     if validate_baseball_context(scanning_normalized, firstname):
                         # Additional phrase validation for firstname matches
                         mock_player = {'name': player_name_normalized, 'team': 'Unknown'}
-                        validated_matches = validate_player_matches(scanning_normalized, [mock_player])
+                        validated_matches = validate_player_matches(scanning_normalized, [mock_player], context="expert_reply")
                         if validated_matches:
                             return True, "firstname_with_context_validated", 0.6
                         else:
@@ -533,7 +533,7 @@ async def check_fallback_recent_mentions(guild, potential_player_words):
                         if word in message_normalized:
                             # Apply phrase validation to fallback matches
                             mock_player = {'name': word, 'team': 'Unknown'}
-                            validated_matches = validate_player_matches(message_normalized, [mock_player])
+                            validated_matches = validate_player_matches(message_normalized, [mock_player], context="expert_reply")
                             if validated_matches:
                                 log_info(f"FALLBACK: Found '{word}' in recent bot message in answering channel (validated)")
                                 return True
@@ -551,7 +551,7 @@ async def check_fallback_recent_mentions(guild, potential_player_words):
                         if word in message_normalized:
                             # Apply phrase validation to fallback matches
                             mock_player = {'name': word, 'team': 'Unknown'}
-                            validated_matches = validate_player_matches(message_normalized, [mock_player])
+                            validated_matches = validate_player_matches(message_normalized, [mock_player], context="expert_reply")
                             if validated_matches:
                                 log_info(f"FALLBACK: Found '{word}' in recent bot message in final channel (validated)")
                                 return True
