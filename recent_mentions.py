@@ -213,6 +213,8 @@ def check_player_mention_hierarchical(player_name_normalized, player_uuid, messa
         # LEVEL 1: EXACT full name match (highest confidence = 1.0)
         exact_pattern = f"\\b{re.escape(player_name_normalized)}\\b"
         if re.search(exact_pattern, scanning_normalized):
+            if 'rodon' in player_name_normalized.lower():
+               log_info(f"🔍 LEVEL 1 DEBUG: Found exact match for '{player_name_normalized}' in '{scanning_normalized[:50]}...'")
             # Apply phrase validation even to exact matches to catch false positives
             mock_player = {'name': player_name_normalized, 'team': 'Unknown'}
             validated_matches = validate_player_matches(scanning_normalized, [mock_player], context="expert_reply")
@@ -243,6 +245,9 @@ def check_player_mention_hierarchical(player_name_normalized, player_uuid, messa
             lastname = player_name_normalized.split()[-1]
             lastname_pattern = f"\\b{re.escape(lastname)}\\b"
             if re.search(lastname_pattern, scanning_normalized):
+                if 'rodon' in player_name_normalized.lower():
+                    log_info(f"🔍 LEVEL 3 DEBUG: Found lastname '{lastname}' in '{scanning_normalized[:50]}...'")
+                    log_info(f"🔍 LEVEL 3 DEBUG: Baseball context check result: {validate_baseball_context(scanning_normalized, lastname)}")
                 # Enhanced validation: baseball context + phrase validation
                 if validate_baseball_context(scanning_normalized, lastname):
                     # Additional phrase validation for lastname matches
@@ -272,6 +277,8 @@ def check_player_mention_hierarchical(player_name_normalized, player_uuid, messa
                             return False, "firstname_context_rejected", 0.0
         
         # LEVEL 5: No match
+        if 'rodon' in player_name_normalized.lower():
+            log_info(f"🔍 NO MATCH DEBUG: '{player_name_normalized}' not found in '{scanning_normalized[:50]}...'")
         return False, "no_match", 0.0
         
     except re.error as e:
