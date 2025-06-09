@@ -401,16 +401,25 @@ def check_player_mentioned(text):
     for word in filtered_words:
         log_info(f"TESTING INDIVIDUAL WORD: '{word}'")
         
+        # Create variations for possessive/plural forms
+        word_variations = [word]
+        if word.endswith("'s") and len(word) > 3:
+            word_variations.append(word[:-2])  # rodon's → rodon
+        elif word.endswith("s") and len(word) > 4 and not word.endswith("ss"):
+            word_variations.append(word[:-1])  # rodons → rodon (but not "moss" → "mos")
+        
         # STRICTER individual word matching - only exact part matches
         word_matches = []
         for player in players_data:
             player_name_normalized = normalize_name(player['name'])
-            
-            # Check if word exactly matches any part of the name (whole words only)
             name_parts = player_name_normalized.split()
-            if word in name_parts:
-                log_info(f"EXACT PART MATCH: '{word}' → {player['name']} ({player['team']})")
-                word_matches.append(player)
+            
+            # Test all word variations
+            for word_variant in word_variations:
+                if word_variant in name_parts:
+                    log_info(f"EXACT PART MATCH: '{word}' (variant: '{word_variant}') → {player['name']} ({player['team']})")
+                    word_matches.append(player)
+                    break  # Found a match, no need to test other variants for this player
         
         # 🔧 VALIDATION: Only accept individual word matches if they seem reasonable
         if word_matches:
