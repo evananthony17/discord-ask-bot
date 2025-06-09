@@ -299,7 +299,9 @@ def validate_baseball_context(message_normalized, name_part):
             'hitting', 'pitching', 'batting', 'era', 'whip', 'ops', 'avg', 'home',
             'runs', 'rbi', 'steals', 'wins', 'saves', 'strikeouts', 'walk',
             'mlb', 'baseball', 'season', 'game', 'fantasy', 'roster', 'lineup',
-            'trade', 'waiver', 'draft', 'prospect', 'rookie', 'veteran'
+            'trade', 'waiver', 'draft', 'prospect', 'rookie', 'veteran', 'outlook', 
+            'status', 'thoughts', 'opinion', 'analysis', 'review',
+            'check', 'chances', 'potential', 'doing'
         }
         
         # Check if the message contains baseball-related terms
