@@ -108,7 +108,6 @@ def validate_expert_reply_context(phrase_words, player_words, phrase, matched_pl
         # Only the most obvious false positives
         r'\bmore like\b', r'\bless like\b', r'\bmuch like\b',
         r'\bhow about\b', r'\bwhat about\b',
-        r'\bgoing to\b', r'\bwant to\b', r'\bneed to\b',
         r'\bkind of\b', r'\bsort of\b', r'\btype of\b',
         r'\bout of\b', r'\binstead of\b'
     ]
@@ -149,7 +148,7 @@ def validate_user_question_context(phrase_words, player_words, phrase, matched_p
         r'\bmore like\b', r'\bless like\b', r'\bmuch like\b', r'\bjust like\b',
         r'\blooks like\b', r'\bseems like\b', r'\bfeels like\b', r'\bsounds like\b',
         r'\bhow about\b', r'\bwhat about\b', r'\bhow are\b', r'\bwhat are\b',
-        r'\bhow is\b', r'\bwhat is\b', r'\bhow was\b', r'\bwhat was\b',
+        r'\bhow was\b', r'\bwhat was\b',
         r'\bgoing to\b', r'\bwant to\b', r'\bneed to\b', r'\btrying to\b',
         r'\bused to\b', r'\bable to\b', r'\bgoing for\b', r'\blooking for\b',
         r'\bthinking about\b', r'\btalking about\b', r'\basking about\b',
