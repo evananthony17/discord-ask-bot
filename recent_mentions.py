@@ -329,7 +329,8 @@ async def check_recent_player_mentions(guild, players_to_check):
         
         log_info(f"RECENT MENTION CHECK: Checking player '{player['name']}' (normalized: '{player_name_normalized}', uuid: {player_uuid[:8]}...)")
         
-        # STEP 1: Check question-reposting channel (answering channel) FIRST
+        # TIER 1: Check question-reposting channel (pending status)
+        log_info(f"TIER 1: Checking answering channel for pending questions...")
         found_in_answering = False
         answering_message_url = None
         if answering_channel:
@@ -368,7 +369,8 @@ async def check_recent_player_mentions(guild, players_to_check):
             except Exception as e:
                 log_error(f"RECENT MENTION CHECK: Error checking answering channel: {e}")
         
-        # STEP 2: Check final answer channel - ONLY check expert reply sections
+        # TIER 2 & 3: Check final answer channel (answered vs mentioned)
+        log_info(f"TIER 2 & 3: Checking final channel for answered/mentioned players...")
         found_in_final = False
         answer_message_url = None
         if final_channel:
@@ -380,7 +382,7 @@ async def check_recent_player_mentions(guild, players_to_check):
                     if message.author == guild.me:  # guild.me is the bot
                         message_normalized = normalize_name(message.content)
                         
-                        # 🔧 UPDATED: Use section-based parsing for final answer messages
+                        # Parse message into sections for tiered checking
                         try:
                             # Parse message into sections
                             sections = parse_final_answer_sections(message.content)
@@ -391,16 +393,25 @@ async def check_recent_player_mentions(guild, players_to_check):
                             )
                             
                             if is_match:
-                                # 🔧 NEW LOGIC: Only count as "answered" if found in expert reply section
+                                # TIER 2: Check if found in expert reply (strong block - answered)
                                 if section_found == "expert_reply" and confidence >= 0.7:
-                                    log_info(f"RECENT MENTION CHECK: Found {player['name']} in EXPERT REPLY in final channel ({match_type}, confidence: {confidence})")
+                                    log_info(f"TIER 2: Found {player['name']} in EXPERT REPLY - status: answered")
                                     found_in_final = True
                                     answer_message_url = message.jump_url
                                     break
                                 else:
-                                    # 🔧 KEY CHANGE: Found in question/metadata but NOT in expert reply - allow future questions
-                                    log_info(f"RECENT MENTION CHECK: Found {player['name']} in {section_found} but NOT in expert reply - allowing future questions")
-                                    # Don't set found_in_final = True, so this won't block future questions
+                                    # TIER 3: Player not in expert reply, check if mentioned anywhere in full message
+                                    full_message_normalized = normalize_name(message.content)
+                                    is_full_match, full_match_type, full_confidence = check_player_mention_hierarchical(
+                                        player_name_normalized, player_uuid, full_message_normalized, message.content, 
+                                        message.author.display_name
+                                    )
+                                    
+                                    if is_full_match and full_confidence >= 0.7:
+                                        # Player was mentioned but NOT answered by expert - DON'T BLOCK
+                                        log_info(f"TIER 3: {player['name']} mentioned in question but NOT in expert reply - allowing future questions")
+                                        # Continue checking other messages, don't set found_in_final = True
+                                    # If not found anywhere in this message, continue to next message
                                     
                         except Exception as e:
                             log_error(f"ERROR in hierarchical matching for message in final channel: {e}")
@@ -410,7 +421,7 @@ async def check_recent_player_mentions(guild, players_to_check):
             except Exception as e:
                 log_error(f"RECENT MENTION CHECK: Error checking final channel: {e}")
         
-        # STEP 3: Determine status with updated logic
+        # STEP 3: Determine status with tiered logic
         status = None
         if found_in_final:
             # Only set to "answered" if found in expert reply section
