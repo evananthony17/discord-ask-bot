@@ -126,7 +126,7 @@ def validate_expert_reply_context(phrase_words, player_words, phrase, matched_pl
     
     # Rule 3: Lower similarity threshold for expert replies (0.4 instead of 0.6)
     similarity = SequenceMatcher(None, phrase_normalized, player_normalized).ratio()
-    if len(phrase_words) >= 2 and similarity < 0.4:
+    if len(phrase_words) >= 2 and similarity < 0.4 and not any(player_word in phrase_words for player_word in player_words):
         log_info(f"EXPERT REPLY VALIDATION FAILED: Low similarity {similarity:.3f} for multi-word phrase")
         return False
     

@@ -379,6 +379,7 @@ async def check_recent_player_mentions(guild, players_to_check):
                 async for message in final_channel.history(after=time_threshold, limit=RECENT_MENTION_LIMIT):
                     message_count += 1
                     # Only check messages from the bot itself
+                    log_info(f"CHECKING MESSAGE: '{message.content[:100]}...' (ID: {message.id})")
                     if message.author == guild.me:  # guild.me is the bot
                         message_normalized = normalize_name(message.content)
                         
