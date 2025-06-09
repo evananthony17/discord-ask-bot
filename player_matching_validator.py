@@ -236,10 +236,28 @@ def validate_user_question_context(phrase_words, player_words, phrase, matched_p
     # If the similarity is very low, it's probably a false positive
     similarity = SequenceMatcher(None, phrase_normalized, player_normalized).ratio()
     
-    # For multi-word phrases, require higher similarity
-    if len(phrase_words) >= 2 and similarity < 0.6:
-        log_info(f"USER QUESTION VALIDATION FAILED: Low similarity {similarity:.3f} for multi-word phrase")
-        return False
+    if len(phrase_words) >= 2:
+        # Check if at least one actual player name part is in the phrase
+        player_name_in_phrase = any(
+            player_word in phrase_words 
+            for player_word in player_words 
+            if len(player_word) >= 3  # Only consider meaningful name parts
+        )
+        
+        if player_name_in_phrase:
+            # If we found actual name parts, be very permissive with similarity
+            min_similarity = 0.2
+            log_info(f"Found player name part in phrase - using permissive threshold: {min_similarity}")
+        else:
+            # If no name parts found, require higher similarity
+            min_similarity = 0.6
+            log_info(f"No player name parts found - using strict threshold: {min_similarity}")
+        
+        if similarity < min_similarity:
+            log_info(f"USER QUESTION VALIDATION FAILED: Low similarity {similarity:.3f} for multi-word phrase (required: {min_similarity})")
+            return False
+        else:
+            log_info(f"Similarity check passed: {similarity:.3f} >= {min_similarity}")
     
     # Rule 4: Check if phrase words actually appear in player name
     if len(phrase_words) >= 2:
