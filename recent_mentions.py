@@ -312,25 +312,50 @@ def check_player_mention_hierarchical(player_name_normalized, player_uuid, messa
 def validate_baseball_context(message_normalized, name_part):
     """
     Validate that this appears to be a baseball context to reduce false positives
+    Enhanced to be more lenient for expert replies
     """
     try:
-        # Baseball context indicators
+        # Expanded baseball context indicators
         baseball_keywords = {
+            # Core baseball terms
             'asked', 'player', 'team', 'stats', 'overall', 'projection', 'update',
             'hitting', 'pitching', 'batting', 'era', 'whip', 'ops', 'avg', 'home',
             'runs', 'rbi', 'steals', 'wins', 'saves', 'strikeouts', 'walk',
             'mlb', 'baseball', 'season', 'game', 'fantasy', 'roster', 'lineup',
             'trade', 'waiver', 'draft', 'prospect', 'rookie', 'veteran', 'outlook', 
             'status', 'thoughts', 'opinion', 'analysis', 'review',
-            'check', 'chances', 'potential', 'doing'
+            'check', 'chances', 'potential', 'doing',
+            # Expert reply language
+            'replied', 'have', 'him', 'he', 'his', 'performance', 'looks', 'good', 'bad',
+            'up', 'down', 'move', 'bump', 'bronze', 'silver', 'gold', 'diamond',
+            'normal', 'aggressive', 'window', 'pas', 'category', 'categories',
+            'upside', 'downside', 'ceiling', 'floor', 'issue', 'issues',
+            # Common baseball abbreviations and terms
+            'vsl', 'vsr', 'clu', 'conl', 'vis', 'bb', 'bbs', 'hr', 'hrs', 'ks',
+            'ip', 'start', 'starts', 'relief', 'closer', 'setup', 'rotation'
         }
         
         # Check if the message contains baseball-related terms
         words_in_message = set(message_normalized.split())
         baseball_context_count = len(words_in_message.intersection(baseball_keywords))
         
-        # Require at least 2 baseball context words for lastname/firstname matches
-        return baseball_context_count >= 2
+        # 🔧 FIXED: More lenient threshold for expert replies
+        # Check if this looks like an expert reply (contains "replied:" or expert language)
+        is_expert_reply = any(indicator in message_normalized.lower() for indicator in [
+            'replied:', '**', 'have him', 'projection', 'aggressive', 'normal'
+        ])
+        
+        if is_expert_reply:
+            # For expert replies, require only 1 baseball keyword (very lenient)
+            required_keywords = 1
+            log_info(f"BASEBALL CONTEXT: Expert reply detected, using lenient threshold ({required_keywords})")
+        else:
+            # For other contexts, require 2 keywords (original threshold)
+            required_keywords = 2
+            log_info(f"BASEBALL CONTEXT: Non-expert context, using strict threshold ({required_keywords})")
+        
+        log_info(f"BASEBALL CONTEXT: Found {baseball_context_count} keywords, required: {required_keywords}")
+        return baseball_context_count >= required_keywords
         
     except Exception as e:
         log_error(f"ERROR in validate_baseball_context: {e}")
@@ -510,21 +535,37 @@ async def check_fallback_recent_mentions(guild, potential_player_words):
     final_channel = discord.utils.get(guild.text_channels, name=FINAL_ANSWER_CHANNEL)
     
     for word in potential_player_words:
+        # 🔧 FIXED: Skip very short words that are likely to cause false positives
+        if len(word) < 4:
+            log_info(f"FALLBACK: Skipping short word '{word}' (length < 4)")
+            continue
+            
         # Check answering channel
         if answering_channel:
             try:
                 async for message in answering_channel.history(after=time_threshold, limit=RECENT_MENTION_LIMIT):
                     if message.author == guild.me:
                         message_normalized = normalize_name(message.content)
-                        if word in message_normalized:
-                            # Apply phrase validation to fallback matches
-                            mock_player = {'name': word, 'team': 'Unknown'}
-                            validated_matches = validate_player_matches(message_normalized, [mock_player], context="expert_reply")
-                            if validated_matches:
-                                log_info(f"FALLBACK: Found '{word}' in recent bot message in answering channel (validated)")
-                                return True
+                        
+                        # 🔧 FIXED: Use word boundary detection instead of simple substring matching
+                        word_pattern = f"\\b{re.escape(word)}\\b(?![a-z])"
+                        word_matches = re.findall(word_pattern, message_normalized, re.IGNORECASE)
+                        
+                        if word_matches:
+                            # Additional check: ensure exact word match (not partial)
+                            exact_word_found = any(match.lower() == word.lower() for match in word_matches)
+                            
+                            if exact_word_found:
+                                # Apply phrase validation to fallback matches
+                                mock_player = {'name': word, 'team': 'Unknown'}
+                                validated_matches = validate_player_matches(message_normalized, [mock_player], context="expert_reply")
+                                if validated_matches:
+                                    log_info(f"FALLBACK: Found exact word '{word}' in recent bot message in answering channel (validated)")
+                                    return True
+                                else:
+                                    log_info(f"FALLBACK VALIDATION: Exact word '{word}' found but rejected by phrase validation")
                             else:
-                                log_info(f"FALLBACK VALIDATION: Word '{word}' found but rejected by phrase validation")
+                                log_info(f"FALLBACK: Word '{word}' found but only as partial match in answering channel - rejecting")
             except Exception as e:
                 log_error(f"FALLBACK: Error checking answering channel: {e}")
         
@@ -534,15 +575,26 @@ async def check_fallback_recent_mentions(guild, potential_player_words):
                 async for message in final_channel.history(after=time_threshold, limit=RECENT_MENTION_LIMIT):
                     if message.author == guild.me:
                         message_normalized = normalize_name(message.content)
-                        if word in message_normalized:
-                            # Apply phrase validation to fallback matches
-                            mock_player = {'name': word, 'team': 'Unknown'}
-                            validated_matches = validate_player_matches(message_normalized, [mock_player], context="expert_reply")
-                            if validated_matches:
-                                log_info(f"FALLBACK: Found '{word}' in recent bot message in final channel (validated)")
-                                return True
+                        
+                        # 🔧 FIXED: Use word boundary detection instead of simple substring matching
+                        word_pattern = f"\\b{re.escape(word)}\\b(?![a-z])"
+                        word_matches = re.findall(word_pattern, message_normalized, re.IGNORECASE)
+                        
+                        if word_matches:
+                            # Additional check: ensure exact word match (not partial)
+                            exact_word_found = any(match.lower() == word.lower() for match in word_matches)
+                            
+                            if exact_word_found:
+                                # Apply phrase validation to fallback matches
+                                mock_player = {'name': word, 'team': 'Unknown'}
+                                validated_matches = validate_player_matches(message_normalized, [mock_player], context="expert_reply")
+                                if validated_matches:
+                                    log_info(f"FALLBACK: Found exact word '{word}' in recent bot message in final channel (validated)")
+                                    return True
+                                else:
+                                    log_info(f"FALLBACK VALIDATION: Exact word '{word}' found but rejected by phrase validation")
                             else:
-                                log_info(f"FALLBACK VALIDATION: Word '{word}' found but rejected by phrase validation")
+                                log_info(f"FALLBACK: Word '{word}' found but only as partial match in final channel - rejecting")
             except Exception as e:
                 log_error(f"FALLBACK: Error checking final channel: {e}")
     
