@@ -192,7 +192,9 @@ def check_player_mention_hierarchical(player_name_normalized, player_uuid, messa
     Enhanced hierarchical matching with phrase validation
     Returns: (is_match, match_type, confidence_score)
     """
-    
+    if 'rodon' in player_name_normalized.lower():
+        log_info(f"🔍 HIERARCHICAL DEBUG: Checking '{player_name_normalized}' in message: '{message_normalized[:100]}...'")
+
     # 🔧 FIXED: Add error handling for username filtering
     try:
         if message_author_name:
