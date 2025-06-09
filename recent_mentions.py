@@ -243,30 +243,48 @@ def check_player_mention_hierarchical(player_name_normalized, player_uuid, messa
         # LEVEL 3: Last name with enhanced validation (medium confidence = 0.7)
         if ' ' in player_name_normalized:
             lastname = player_name_normalized.split()[-1]
-            lastname_pattern = f"\\b{re.escape(lastname)}\\b"
-            if re.search(lastname_pattern, scanning_normalized):
-                if 'rodon' in player_name_normalized.lower():
-                    log_info(f"🔍 LEVEL 3 DEBUG: Found lastname '{lastname}' in '{scanning_normalized[:50]}...'")
-                    log_info(f"🔍 LEVEL 3 DEBUG: Baseball context check result: {validate_baseball_context(scanning_normalized, lastname)}")
-                # Enhanced validation: baseball context + phrase validation
-                if validate_baseball_context(scanning_normalized, lastname):
-                    # Additional phrase validation for lastname matches
-                    mock_player = {'name': player_name_normalized, 'team': 'Unknown'}
-                    validated_matches = validate_player_matches(scanning_normalized, [mock_player], context="expert_reply")
-                    if validated_matches:
-                        return True, "lastname_with_context_validated", 0.7
-                    else:
-                        log_info(f"RECENT MENTION VALIDATION: Lastname match for '{lastname}' rejected by phrase validation")
-                        return False, "lastname_context_rejected", 0.0
+            # 🔧 FIXED: Prevent partial word matches like "last" matching "lasts"
+            # Use stricter word boundary pattern that requires exact word match
+            lastname_pattern = f"\\b{re.escape(lastname)}\\b(?![a-z])"
+            lastname_matches = re.findall(lastname_pattern, scanning_normalized, re.IGNORECASE)
+            
+            if lastname_matches:
+                # Additional check: ensure the found word is exactly the lastname (not a partial match)
+                exact_lastname_found = any(match.lower() == lastname.lower() for match in lastname_matches)
+                
+                if exact_lastname_found:
+                    if 'rodon' in player_name_normalized.lower():
+                        log_info(f"🔍 LEVEL 3 DEBUG: Found exact lastname '{lastname}' in '{scanning_normalized[:50]}...'")
+                        log_info(f"🔍 LEVEL 3 DEBUG: Baseball context check result: {validate_baseball_context(scanning_normalized, lastname)}")
+                    
+                    # Enhanced validation: baseball context + phrase validation
+                    if validate_baseball_context(scanning_normalized, lastname):
+                        # Additional phrase validation for lastname matches
+                        mock_player = {'name': player_name_normalized, 'team': 'Unknown'}
+                        validated_matches = validate_player_matches(scanning_normalized, [mock_player], context="expert_reply")
+                        if validated_matches:
+                            return True, "lastname_with_context_validated", 0.7
+                        else:
+                            log_info(f"RECENT MENTION VALIDATION: Lastname match for '{lastname}' rejected by phrase validation")
+                            return False, "lastname_context_rejected", 0.0
+                else:
+                    log_info(f"RECENT MENTION VALIDATION: Lastname '{lastname}' found but only as partial match - rejecting")
+                    return False, "lastname_partial_match_rejected", 0.0
         
         # LEVEL 4: First name with enhanced validation (lower confidence = 0.6)
         if ' ' in player_name_normalized:
             firstname = player_name_normalized.split()[0]
             # Only for distinctive first names (length >= 5 to avoid common names like "mike", "john")
             if len(firstname) >= 5:
-                firstname_pattern = f"\\b{re.escape(firstname)}\\b"
-                if re.search(firstname_pattern, scanning_normalized):
-                    if validate_baseball_context(scanning_normalized, firstname):
+                # 🔧 FIXED: Use same stricter pattern as lastname to prevent partial matches
+                firstname_pattern = f"\\b{re.escape(firstname)}\\b(?![a-z])"
+                firstname_matches = re.findall(firstname_pattern, scanning_normalized, re.IGNORECASE)
+                
+                if firstname_matches:
+                    # Additional check: ensure the found word is exactly the firstname (not a partial match)
+                    exact_firstname_found = any(match.lower() == firstname.lower() for match in firstname_matches)
+                    
+                    if exact_firstname_found and validate_baseball_context(scanning_normalized, firstname):
                         # Additional phrase validation for firstname matches
                         mock_player = {'name': player_name_normalized, 'team': 'Unknown'}
                         validated_matches = validate_player_matches(scanning_normalized, [mock_player], context="expert_reply")
@@ -275,6 +293,9 @@ def check_player_mention_hierarchical(player_name_normalized, player_uuid, messa
                         else:
                             log_info(f"RECENT MENTION VALIDATION: Firstname match for '{firstname}' rejected by phrase validation")
                             return False, "firstname_context_rejected", 0.0
+                    else:
+                        log_info(f"RECENT MENTION VALIDATION: Firstname '{firstname}' found but only as partial match or failed baseball context - rejecting")
+                        return False, "firstname_partial_match_rejected", 0.0
         
         # LEVEL 5: No match
         if 'rodon' in player_name_normalized.lower():
