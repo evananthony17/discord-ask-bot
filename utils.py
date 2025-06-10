@@ -191,7 +191,7 @@ def is_likely_player_request(text):
             log_info(f"PLAYER REQUEST: Blocked query '{text}' - matched casual pattern: {pattern}")
             return False
     
-    # 🔧 FIXED: Check for potential player names in the database
+    # 🔧 FIXED: Check for potential player names in the database with validation
     potential_player_words = []
     for word in words:
         if word not in blocked_words and len(word) >= 4:
@@ -202,10 +202,25 @@ def is_likely_player_request(text):
                     potential_player_words.append(word)
                     break
     
-    # If we found potential player words, allow the request
+    # If we found potential player words, validate them before approving
     if potential_player_words:
-        log_info(f"PLAYER REQUEST: Approved query '{text}' - found potential player words: {potential_player_words}")
-        return True
+        # 🔧 FIX: Validate potential words before approving the request
+        try:
+            from player_matching_validator import validate_player_matches
+            mock_players = [{'name': word, 'team': 'Unknown'} for word in potential_player_words]
+            validated_words = validate_player_matches(text, mock_players)
+            
+            if validated_words:
+                log_info(f"PLAYER REQUEST: Approved query '{text}' - found validated player words: {[p['name'] for p in validated_words]}")
+                return True
+            else:
+                log_info(f"PLAYER REQUEST: Rejected query '{text}' - potential words failed validation: {potential_player_words}")
+                # Continue to other checks instead of returning False immediately
+        except Exception as e:
+            log_error(f"PLAYER REQUEST: Error during validation: {e}")
+            # Fallback to original behavior if validation fails
+            log_info(f"PLAYER REQUEST: Approved query '{text}' - found potential player words (validation failed): {potential_player_words}")
+            return True
     
     # 🔧 FALLBACK: Check for question words without proper names (original logic but more lenient)
     question_words = {'what', 'when', 'where', 'why', 'how', 'who', 'which'}

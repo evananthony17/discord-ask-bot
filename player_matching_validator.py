@@ -343,9 +343,68 @@ def validate_user_question_context(phrase_words, player_words, phrase, matched_p
     log_info(f"USER QUESTION VALIDATION PASSED: '{phrase}' → '{matched_player_name}'")
     return True
 
+def validate_player_mention_in_text(text, player_name, context=None):
+    """
+    NEW: Validate if a full text/message mentions a specific player
+    Use Case: Check if "Paxton Schultz how is he looking" mentions "Paxton Schultz"
+    
+    Args:
+        text: Full message/text to check
+        player_name: Specific player name to look for
+        context: Optional context hint
+    """
+    if context is None:
+        context = detect_validation_context(text)
+    
+    log_info(f"MENTION VALIDATION: Checking if '{text}' mentions '{player_name}' (context: {context})")
+    
+    # For mention validation, we're much more permissive
+    # We just need to verify the player name appears reasonably in the text
+    
+    text_normalized = normalize_name(text).lower()
+    player_normalized = normalize_name(player_name).lower()
+    
+    # Check if player name (or parts) appear in the text
+    player_words = player_normalized.split()
+    text_words = text_normalized.split()
+    
+    # Count how many player name parts appear in the text
+    matching_parts = sum(1 for part in player_words if part in text_words)
+    
+    # For mention validation, if most of the player name appears, it's valid
+    if len(player_words) == 1:
+        # Single name (like "Rodon") - just check if it appears
+        is_valid = player_normalized in text_normalized
+    elif len(player_words) == 2:
+        # Two-part name - require at least one part to match
+        is_valid = matching_parts >= 1
+    else:
+        # Multi-part name - require at least half the parts
+        is_valid = matching_parts >= len(player_words) // 2
+    
+    if is_valid:
+        log_info(f"MENTION VALIDATION PASSED: '{player_name}' found in '{text}' (context: {context})")
+    else:
+        log_info(f"MENTION VALIDATION FAILED: '{player_name}' not clearly mentioned in '{text}' (context: {context})")
+    
+    return is_valid
+
+def validate_extracted_player_name(phrase, player_name, context=None):
+    """
+    ORIGINAL: Validate if an extracted phrase looks like it could be a player name
+    Use Case: Check if "rodon" could refer to "Carlos Rodon"
+    
+    Args:
+        phrase: Extracted phrase/word to validate
+        player_name: Player name it supposedly matches
+        context: Optional context hint
+    """
+    # This is the original validation logic - keep it unchanged
+    return is_valid_player_name_phrase(phrase, player_name, context)
+
 def validate_player_matches(text, matches, context=None):
     """
-    Context-aware filtering of false positive matches using phrase validation
+    UPDATED: Context-aware filtering using the appropriate validation method
     
     Args:
         text: The text being validated
@@ -364,7 +423,8 @@ def validate_player_matches(text, matches, context=None):
     validated_matches = []
     
     for player in matches:
-        if is_valid_player_name_phrase(text, player['name'], context):
+        # Use mention validation (more permissive) for full text validation
+        if validate_player_mention_in_text(text, player['name'], context):
             validated_matches.append(player)
             log_info(f"MATCH VALIDATED: {player['name']} ({player['team']}) in {context} context")
         else:

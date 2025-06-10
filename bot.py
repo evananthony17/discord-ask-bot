@@ -254,12 +254,22 @@ async def ask_question(ctx, *, question: str = None):
         
         matched_players = check_player_mentioned(question)
         
-        # Fallback check for potential player words
+        # Fallback check for potential player words - but respect validation
         fallback_recent_check = False
         if not matched_players and is_likely_player_request(question):
             potential_player_words = get_potential_player_words(question)
             if potential_player_words:
-                fallback_recent_check = True
+                # 🔧 FIX: Validate potential player words before bypassing
+                from player_matching_validator import validate_player_matches
+                mock_players = [{'name': word, 'team': 'Unknown'} for word in potential_player_words]
+                validated_words = validate_player_matches(question, mock_players)
+                
+                if validated_words:
+                    log_info(f"FALLBACK VALIDATION: Approved fallback for validated words: {[p['name'] for p in validated_words]}")
+                    fallback_recent_check = True
+                else:
+                    log_info(f"FALLBACK VALIDATION: Rejected fallback - potential words failed validation: {potential_player_words}")
+                    fallback_recent_check = False
 
         if matched_players:
             # Handle multiple players

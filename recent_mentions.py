@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 from config import FINAL_ANSWER_CHANNEL, ANSWERING_CHANNEL, RECENT_MENTION_HOURS, RECENT_MENTION_LIMIT
 from utils import normalize_name
 from logging_system import log_error, log_info
-from player_matching_validator import validate_player_matches
+from player_matching_validator import validate_player_matches, validate_extracted_player_name
 
 # -------- ENHANCED MESSAGE PARSING FUNCTIONS --------
 
