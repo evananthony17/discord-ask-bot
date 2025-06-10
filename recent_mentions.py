@@ -39,7 +39,7 @@ def parse_final_answer_sections(message_content):
             expert_reply_raw = message_content[expert_match.end():].strip()
             
             # Clean expert reply: remove correction footer if present
-            correction_pattern = r'\*This answer was corrected by [^*]+\*\s*$'
+            correction_pattern = r'\*This answer was updated by [^*]+\*\s*$'
             expert_reply_clean = re.sub(correction_pattern, '', expert_reply_raw, flags=re.IGNORECASE).strip()
             
             # Remove any trailing "-----" markers

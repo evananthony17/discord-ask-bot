@@ -540,7 +540,7 @@ async def correct_answer(ctx, message_link: str, *, correction: str):
             before_reply = original_content.split("replied:")[0] + "replied:"
             
             # Create the corrected content with surgical replacement
-            corrected_content = before_reply + f"\n{correction}\n\n*This answer was corrected by {ctx.author.display_name}*\n-----"
+            corrected_content = before_reply + f"\n{correction}\n\n*This answer was updated by {ctx.author.display_name}*\n-----"
             
             # Edit the original message
             await original_message.edit(content=corrected_content)
