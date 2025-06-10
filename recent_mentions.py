@@ -99,6 +99,18 @@ def check_player_in_message_sections(player_name_normalized, player_uuid, sectio
             if is_match:
                 log_info(f"SECTION MATCH: Found {player_name_normalized} in EXPERT REPLY ({match_type}, confidence: {confidence})")
                 return True, f"expert_reply_{match_type}", confidence, "expert_reply"
+            else:
+                # 🔧 FALLBACK: If expert reply validation fails, check if player name exists in question
+                # This handles cases where expert uses pronouns but clearly answered that player's question
+                if sections['question_content']:
+                    question_normalized = normalize_name(sections['question_content'])
+                    question_is_match, question_match_type, question_confidence = check_player_mention_hierarchical(
+                        player_name_normalized, player_uuid, question_normalized, sections['question_content'], message_author_name
+                    )
+                    if question_is_match and question_confidence >= 0.7:
+                        log_info(f"SECTION MATCH FALLBACK: Expert reply failed validation but found {player_name_normalized} in QUESTION - treating as expert reply match")
+                        log_info(f"FALLBACK LOGIC: Expert likely answered with pronouns, but question clearly about this player")
+                        return True, f"expert_reply_fallback_{question_match_type}", question_confidence, "expert_reply"
         
         # PRIORITY 2: Check question content (medium confidence)
         if sections['question_content']:

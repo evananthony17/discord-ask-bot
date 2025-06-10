@@ -124,17 +124,37 @@ def validate_expert_reply_context(phrase_words, player_words, phrase, matched_pl
             log_info(f"EXPERT REPLY VALIDATION FAILED: Words too short: {word1}, {word2}")
             return False
     
-    # Rule 3: Lower similarity threshold for expert replies (0.4 instead of 0.6)
+    # Rule 3: Use same permissive logic as user questions for consistency
     similarity = SequenceMatcher(None, phrase_normalized, player_normalized).ratio()
-    if len(phrase_words) >= 2 and similarity < 0.4 and not any(player_word in phrase_words for player_word in player_words):
-        log_info(f"EXPERT REPLY VALIDATION FAILED: Low similarity {similarity:.3f} for multi-word phrase")
-        return False
     
-    # Rule 4: More lenient word matching
+    if len(phrase_words) >= 2:
+        # Check if at least one actual player name part is in the phrase
+        player_name_in_phrase = any(
+            player_word in phrase_words 
+            for player_word in player_words 
+            if len(player_word) >= 3  # Only consider meaningful name parts
+        )
+        
+        if player_name_in_phrase:
+            # If we found actual name parts, be very permissive with similarity (same as user questions)
+            min_similarity = 0.2
+            log_info(f"Found player name part in phrase - using permissive threshold: {min_similarity}")
+        else:
+            # If no name parts found, use moderate threshold for expert replies (more lenient than user questions)
+            min_similarity = 0.3
+            log_info(f"No player name parts found - using moderate threshold: {min_similarity}")
+        
+        if similarity < min_similarity:
+            log_info(f"EXPERT REPLY VALIDATION FAILED: Low similarity {similarity:.3f} for multi-word phrase (required: {min_similarity})")
+            return False
+        else:
+            log_info(f"Similarity check passed: {similarity:.3f} >= {min_similarity}")
+    
+    # Rule 4: More lenient word matching (same as user questions)
     if len(phrase_words) >= 2:
         phrase_words_in_player = sum(1 for word in phrase_words if word in player_words)
-        if phrase_words_in_player == 0 and similarity < 0.5:
-            log_info(f"EXPERT REPLY VALIDATION FAILED: No phrase words found in player name and low similarity")
+        if phrase_words_in_player == 0:
+            log_info(f"EXPERT REPLY VALIDATION FAILED: No phrase words found in player name")
             return False
     
     log_info(f"EXPERT REPLY VALIDATION PASSED: '{phrase}' → '{matched_player_name}'")
