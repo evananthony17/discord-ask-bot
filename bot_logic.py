@@ -9,82 +9,50 @@ from question_map_store import load_question_map, save_question_map, append_ques
 # -------- MULTI-PLAYER QUESTION PROCESSING --------
 
 async def handle_multi_player_question(ctx, question, matched_players, question_map):
-    """Handle questions about multiple players (e.g. 'How are Judge, Ohtani, and Acuña doing?')"""
+    """🔧 FIXED: Handle questions about multiple players with single player policy enforcement"""
     # Import here to avoid circular imports
     from recent_mentions import check_recent_player_mentions
+    from player_matching import capture_all_raw_player_detections
     
-    print(f"MULTI-PLAYER QUESTION: Found {len(matched_players)} players, processing all of them")
+    print(f"MULTI-PLAYER QUESTION: Found {len(matched_players)} players, applying single player policy")
     
-    # Log the multi-player detection
-    await log_analytics("Question Processed",
+    # 🔧 NEW: Single Player Policy Enforcement
+    log_info(f"🚫 SINGLE PLAYER POLICY: Question detected {len(matched_players)} validated players: {[p['name'] for p in matched_players]}")
+    
+    # Capture raw detections for enhanced blocker message
+    all_raw_detections = capture_all_raw_player_detections(question)
+    log_info(f"🚫 SINGLE PLAYER POLICY: Raw detections were: {all_raw_detections}")
+    
+    # Create enhanced blocker message showing ALL detected names (including false positives)
+    if all_raw_detections:
+        detected_names_str = ", ".join(all_raw_detections)
+        blocker_message = f"You may only ask about one player. Your question has been blocked as you asked about [{detected_names_str}]"
+    else:
+        # Fallback if raw detection failed
+        validated_names_str = ", ".join([p['name'] for p in matched_players])
+        blocker_message = f"You may only ask about one player. Your question has been blocked as you asked about [{validated_names_str}]"
+    
+    try:
+        await ctx.message.delete()
+    except:
+        pass
+    
+    error_msg = await ctx.send(blocker_message)
+    await error_msg.delete(delay=10)
+    
+    # Log the single player policy violation
+    await log_analytics("Single Player Policy",
         user_id=ctx.author.id,
         user_name=ctx.author.display_name,
         channel=ctx.channel.name,
         question=question,
-        status="multi_player_detected",
-        reason=f"found_{len(matched_players)}_players"
+        validated_players=len(matched_players),
+        raw_detections=len(all_raw_detections) if all_raw_detections else 0,
+        detected_names=all_raw_detections if all_raw_detections else [p['name'] for p in matched_players],
+        status="blocked_multi_player"
     )
     
-    # Check recent mentions for ALL players
-    recent_mentions = await check_recent_player_mentions(ctx.guild, matched_players)
-    
-    if recent_mentions:
-        print(f"BLOCKING: {len(recent_mentions)} of the {len(matched_players)} players have recent mentions")
-        
-        # Block the question since some players were recently mentioned
-        try:
-            await ctx.message.delete()
-        except:
-            pass
-        
-        # Create a detailed blocking message with specific URLs
-        if len(recent_mentions) == 1:
-            mention = recent_mentions[0]
-            player = mention["player"]
-            status = mention["status"]
-            
-            if status == "answered":
-                # 🔧 NEW: Use specific answer URL if available
-                answer_url = mention.get("answer_url")
-                if answer_url:
-                    error_msg = await ctx.send(f"One of the players you asked about (**{player['name']}**) was answered recently: {answer_url}")
-                else:
-                    error_msg = await ctx.send(f"One of the players you asked about ({player['name']}) has been asked about recently. There is an answer here: {FINAL_ANSWER_LINK}")
-            else:
-                error_msg = await ctx.send(f"One of the players you asked about ({player['name']}) has been asked about recently, please be patient and wait for an answer.")
-        else:
-            # Multiple players with recent mentions - show count and generic message
-            answered_players = [m for m in recent_mentions if m["status"] == "answered"]
-            pending_players = [m for m in recent_mentions if m["status"] == "pending"]
-            
-            if answered_players and not pending_players:
-                # All mentioned players were answered
-                player_names = [f"{m['player']['name']}" for m in answered_players]
-                players_text = ", ".join(player_names)
-                error_msg = await ctx.send(f"Some of the players you asked about ({players_text}) have been answered recently. Check: {FINAL_ANSWER_LINK}")
-            elif pending_players and not answered_players:
-                # All mentioned players are pending
-                player_names = [f"{m['player']['name']}" for m in pending_players]
-                players_text = ", ".join(player_names)
-                error_msg = await ctx.send(f"Some of the players you asked about ({players_text}) have been asked about recently, please be patient and wait for answers.")
-            else:
-                # Mix of answered and pending
-                player_names = [f"{m['player']['name']}" for m in recent_mentions]
-                players_text = ", ".join(player_names)
-                error_msg = await ctx.send(f"Some of the players you asked about ({players_text}) have been asked about recently, please be patient and check for existing answers.")
-        
-        await error_msg.delete(delay=10)
-        return True  # Blocked
-    else:
-        # No recent mentions for any player - approve the multi-player question
-        print(f"APPROVING: Multi-player question with {len(matched_players)} players, no recent mentions")
-        
-        # Add all player names to the question for clarity
-        player_list = ", ".join([f"{p['name']} ({p['team']})" for p in matched_players])
-        modified_question = f"{question} [Players: {player_list}]"
-        
-        await process_approved_question(ctx.channel, ctx.author, modified_question, ctx.message, question_map)
-        return False  # Not blocked, processed
+    return True  # Always blocked - single player policy
 
 # -------- SINGLE PLAYER QUESTION PROCESSING --------
 
