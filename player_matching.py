@@ -379,7 +379,7 @@ def capture_all_raw_player_detections(text):
 # -------- MAIN PLAYER CHECKING FUNCTION --------
 
 def check_player_mentioned(text):
-    """🔧 FIXED: Check if any player is mentioned with COMBINATION-FIRST matching to avoid false positives"""
+    """🔧 FIXED: Check if any player is mentioned with MULTI-PLAYER detection integration"""
     start_time = datetime.now()
     
     log_info(f"CHECK PLAYER: Looking for players in '{text}'")
@@ -393,7 +393,50 @@ def check_player_mentioned(text):
         log_info(f"NICKNAME: Using expanded text: '{expanded_text}'")
         text = expanded_text
     
-    # 🔧 NEW: COMBINATION-FIRST approach to avoid false positives like "Will Cruz"
+    # 🔧 NEW: Use existing multi-player detection logic
+    potential_names = extract_potential_names(text)
+    all_detected_players = []
+    
+    log_info(f"MULTI-PLAYER INTEGRATION: Found {len(potential_names)} potential names: {potential_names}")
+    
+    # Process each potential name to find matching players
+    for potential_name in potential_names:
+        log_info(f"PROCESSING POTENTIAL NAME: '{potential_name}'")
+        
+        # Use existing fuzzy matching for each potential name
+        name_matches = fuzzy_match_players(potential_name, max_results=10)
+        
+        if name_matches:
+            log_info(f"FOUND MATCHES for '{potential_name}': {[p['name'] for p in name_matches]}")
+            all_detected_players.extend(name_matches)
+        else:
+            log_info(f"NO MATCHES for '{potential_name}'")
+    
+    # Remove duplicates while preserving order
+    seen_players = set()
+    unique_detected_players = []
+    for player in all_detected_players:
+        player_key = f"{normalize_name(player['name'])}|{normalize_name(player['team'])}"
+        if player_key not in seen_players:
+            unique_detected_players.append(player)
+            seen_players.add(player_key)
+            log_info(f"UNIQUE PLAYER DETECTED: {player['name']} ({player['team']})")
+    
+    if unique_detected_players:
+        log_info(f"MULTI-PLAYER DETECTION: Found {len(unique_detected_players)} unique players")
+        
+        # Apply validation to all detected players
+        validated_players = validate_player_matches(text, unique_detected_players)
+        
+        duration_ms = int((datetime.now() - start_time).total_seconds() * 1000)
+        asyncio.create_task(log_analytics("Player Search",
+            question=text, duration_ms=duration_ms, players_checked=len(players_data),
+            matches_found=len(validated_players), players_found=validated_players, search_type="multi_player_integrated"
+        ))
+        
+        return validated_players
+    
+    # 🔧 FALLBACK: If multi-player detection didn't find anything, use original logic
     text_normalized = normalize_name(text)
     
     # Stop words to filter out
