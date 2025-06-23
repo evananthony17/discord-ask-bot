@@ -252,7 +252,47 @@ async def ask_question(ctx, *, question: str = None):
                 pass
             return
         
+        # 🔧 NEW: Capture ALL raw player detections BEFORE validation for enhanced blocker message
+        from player_matching import capture_all_raw_player_detections
+        all_raw_detections = capture_all_raw_player_detections(question)
+        
         matched_players = check_player_mentioned(question)
+        
+        # 🔧 NEW: Single Player Limit with Enhanced Blocker Message
+        if matched_players and len(matched_players) > 1:
+            # Check if this violates single player policy
+            log_info(f"SINGLE PLAYER POLICY: Question detected {len(matched_players)} validated players: {[p['name'] for p in matched_players]}")
+            log_info(f"SINGLE PLAYER POLICY: Raw detections were: {all_raw_detections}")
+            
+            # Create enhanced blocker message showing ALL detected names (including false positives)
+            if all_raw_detections:
+                detected_names_str = ", ".join(all_raw_detections)
+                blocker_message = f"You may only ask about one player. Your question has been blocked as you asked about [{detected_names_str}]"
+            else:
+                # Fallback if raw detection failed
+                validated_names_str = ", ".join([p['name'] for p in matched_players])
+                blocker_message = f"You may only ask about one player. Your question has been blocked as you asked about [{validated_names_str}]"
+            
+            try:
+                await ctx.message.delete()
+            except:
+                pass
+            
+            error_msg = await ctx.send(blocker_message)
+            await error_msg.delete(delay=10)
+            
+            # Log the single player policy violation
+            await log_analytics("Single Player Policy",
+                user_id=ctx.author.id,
+                user_name=ctx.author.display_name,
+                channel=ctx.channel.name,
+                question=question,
+                validated_players=len(matched_players),
+                raw_detections=len(all_raw_detections),
+                detected_names=all_raw_detections,
+                status="blocked"
+            )
+            return
         
         # Fallback check for potential player words - but respect validation
         fallback_recent_check = False

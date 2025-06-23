@@ -246,6 +246,136 @@ def fuzzy_match_players(text, max_results=8):
     log_info(f"FUZZY MATCH Final", f"Returning {len(unique_matches)} unique matches: {[p['name'] for p in unique_matches]}")
     return unique_matches
 
+# -------- RAW PLAYER DETECTION (NEW) --------
+
+def capture_all_raw_player_detections(text):
+    """
+    NEW: Capture ALL player detections before any validation filtering
+    This is used for the enhanced blocker message to show what was detected
+    Returns: list of detected player names (including false positives)
+    """
+    start_time = datetime.now()
+    
+    log_info(f"RAW DETECTION: Capturing all detections for '{text}'")
+    
+    if not players_data or not is_likely_player_request(text):
+        return []
+    
+    # First, expand any nicknames
+    expanded_text = expand_nicknames(text)
+    if expanded_text != text:
+        log_info(f"RAW DETECTION: Using expanded text: '{expanded_text}'")
+        text = expanded_text
+    
+    text_normalized = normalize_name(text)
+    all_detected_names = []
+    
+    # Stop words to filter out (minimal filtering for raw detection)
+    basic_stop_words = {
+        'how', 'is', 'was', 'are', 'were', 'the', 'a', 'an', 'about', 'what', 'when', 'where', 'why', 'who',
+        'should', 'would', 'could', 'can', 'will', 'today', 'yesterday', 'tomorrow', 'this', 'that', 'these', 'those'
+    }
+    
+    # Extract words with minimal filtering
+    words = text_normalized.split()
+    filtered_words = [word for word in words if word not in basic_stop_words and len(word) >= 3]
+    
+    log_info(f"RAW DETECTION: Filtered words: {filtered_words}")
+    
+    # Test ALL combinations and individual words (no validation filtering)
+    
+    # Test 2-word combinations
+    for i in range(len(filtered_words) - 1):
+        combo = f"{filtered_words[i]} {filtered_words[i+1]}"
+        
+        # Look for matches on this combination
+        for player in players_data:
+            player_name_normalized = normalize_name(player['name'])
+            
+            # Check if combo matches or is contained in player name
+            if (player_name_normalized == combo or 
+                combo in player_name_normalized or 
+                player_name_normalized in combo):
+                detected_name = player['name']
+                if detected_name not in all_detected_names:
+                    all_detected_names.append(detected_name)
+                    log_info(f"RAW DETECTION: Found combo match '{combo}' → {detected_name}")
+    
+    # Test 3-word combinations
+    for i in range(len(filtered_words) - 2):
+        combo = f"{filtered_words[i]} {filtered_words[i+1]} {filtered_words[i+2]}"
+        
+        # Look for matches on this combination
+        for player in players_data:
+            player_name_normalized = normalize_name(player['name'])
+            
+            # Check if combo matches or is contained in player name
+            if (player_name_normalized == combo or 
+                combo in player_name_normalized or 
+                player_name_normalized in combo):
+                detected_name = player['name']
+                if detected_name not in all_detected_names:
+                    all_detected_names.append(detected_name)
+                    log_info(f"RAW DETECTION: Found 3-word combo match '{combo}' → {detected_name}")
+    
+    # Test individual words
+    for word in filtered_words:
+        # Create variations for possessive/plural forms
+        word_variations = [word]
+        if word.endswith("'s") and len(word) > 3:
+            word_variations.append(word[:-2])
+        elif word.endswith("s") and len(word) > 4 and not word.endswith("ss"):
+            word_variations.append(word[:-1])
+        
+        # Test individual word matches
+        for player in players_data:
+            player_name_normalized = normalize_name(player['name'])
+            name_parts = player_name_normalized.split()
+            
+            # Test all word variations
+            for word_variant in word_variations:
+                if word_variant in name_parts:
+                    detected_name = player['name']
+                    if detected_name not in all_detected_names:
+                        all_detected_names.append(detected_name)
+                        log_info(f"RAW DETECTION: Found individual word match '{word}' → {detected_name}")
+                    break
+    
+    # Test full text matches
+    for player in players_data:
+        player_name_normalized = normalize_name(player['name'])
+        
+        # Substring matches
+        if (text_normalized in player_name_normalized or 
+            player_name_normalized in text_normalized):
+            detected_name = player['name']
+            if detected_name not in all_detected_names:
+                all_detected_names.append(detected_name)
+                log_info(f"RAW DETECTION: Found full text match '{text_normalized}' → {detected_name}")
+        
+        # Lastname matching for single-word queries
+        query_words = text_normalized.split()
+        if len(query_words) == 1:
+            name_parts = player_name_normalized.split()
+            if len(name_parts) >= 2:
+                lastname = name_parts[-1]
+                if re.search(f"\\b{re.escape(lastname)}\\b", text_normalized):
+                    detected_name = player['name']
+                    if detected_name not in all_detected_names:
+                        all_detected_names.append(detected_name)
+                        log_info(f"RAW DETECTION: Found lastname match '{lastname}' → {detected_name}")
+    
+    # Fuzzy matching for additional detections
+    fuzzy_matches = fuzzy_match_players(text, max_results=20)  # Get more for raw detection
+    for player in fuzzy_matches:
+        detected_name = player['name']
+        if detected_name not in all_detected_names:
+            all_detected_names.append(detected_name)
+            log_info(f"RAW DETECTION: Found fuzzy match → {detected_name}")
+    
+    log_info(f"RAW DETECTION: Total detected names: {len(all_detected_names)} - {all_detected_names}")
+    return all_detected_names
+
 # -------- MAIN PLAYER CHECKING FUNCTION --------
 
 def check_player_mentioned(text):
