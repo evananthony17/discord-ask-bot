@@ -35,34 +35,7 @@ intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 # -------- HELPER FUNCTIONS --------
-def is_ambiguous_single_player_question(question, matched_players):
-    """Determine if this is an ambiguous single-player question requiring disambiguation"""
-    
-    if len(matched_players) == 2:
-        return True
-    
-    # Look for multi-player indicators in the question
-    multi_player_indicators = ['and', '&', ',', 'both', 'all', 'compare', 'vs', 'versus']
-    question_lower = question.lower()
-    
-    # If question contains multi-player words, it's intentional
-    if any(indicator in question_lower for indicator in multi_player_indicators):
-        # EXCEPTION: If only one unique last name mentioned, it's probably ambiguous
-        last_names = set()
-        for player in matched_players:
-            last_name = player['name'].split()[-1].lower()
-            last_names.add(last_name)
-        
-        # If all players share the same last name, it's ambiguous despite "and"
-        if len(last_names) == 1:
-            return True
-        
-        return False
-    
-    if len(matched_players) >= 3:
-        return True
-    
-    return True
+# (Old disambiguation logic removed - now handled inline with proper last name analysis)
 
 # -------- EVENTS --------
 @bot.event
@@ -274,14 +247,27 @@ async def ask_question(ctx, *, question: str = None):
         if matched_players:
             # Handle multiple players
             if len(matched_players) > 1:
-                # Check if this is an ambiguous single-player question vs intentional multi-player
-                if is_ambiguous_single_player_question(question, matched_players):
-                    # Show disambiguation prompt
+                # 🔧 FIXED: Proper decision logic for disambiguation vs multi-player blocking
+                
+                # Check if all players share the same last name (ambiguous case)
+                last_names = set()
+                for player in matched_players:
+                    last_name = player['name'].split()[-1].lower()
+                    last_names.add(last_name)
+                
+                log_info(f"DECISION LOGIC: Found {len(matched_players)} players with {len(last_names)} unique last names")
+                log_info(f"DECISION LOGIC: Players: {[p['name'] for p in matched_players]}")
+                log_info(f"DECISION LOGIC: Last names: {list(last_names)}")
+                
+                if len(last_names) == 1:
+                    # All players share same last name = ambiguous single player = DISAMBIGUATE
+                    log_info(f"DECISION LOGIC: Same last name detected → DISAMBIGUATION")
                     from selection_handlers import create_player_disambiguation_prompt
                     await create_player_disambiguation_prompt(ctx, question, matched_players)
                     return
                 else:
-                    # True multi-player question - process all players
+                    # Multiple distinct last names = true multi-player question = BLOCK
+                    log_info(f"DECISION LOGIC: Multiple distinct last names → MULTI-PLAYER BLOCK")
                     await handle_multi_player_question(ctx, question, matched_players, question_map)
                     return
             
