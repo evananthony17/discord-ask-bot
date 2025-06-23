@@ -116,10 +116,79 @@ async def handle_disambiguation_selection(reaction, user, selected_player, selec
     from recent_mentions import check_recent_player_mentions
     from bot_logic import process_approved_question
     from bot import question_map
+    from player_matching import capture_all_raw_player_detections
     
     log_info(f"🎯 User disambiguated to: {selected_player['name']} ({selected_player['team']})")
     
-    # Check recent mentions for this specific player
+    # 🔧 NEW: Check if this was a multi-player question that needs single player policy enforcement
+    original_question = selection_data['original_question']
+    all_matched_players = selection_data['players']  # All players that were matched originally
+    
+    # 🔧 NEW: Single Player Policy Check AFTER disambiguation
+    if len(all_matched_players) > 1:
+        # Check if this was truly a multi-player question vs ambiguous single player
+        multi_player_indicators = ['and', '&', ',', 'both', 'all', 'compare', 'vs', 'versus']
+        question_lower = original_question.lower()
+        
+        # If question contains multi-player words, check if they're distinct players
+        if any(indicator in question_lower for indicator in multi_player_indicators):
+            # Check if all players share the same last name (ambiguous case)
+            last_names = set()
+            for player in all_matched_players:
+                last_name = player['name'].split()[-1].lower()
+                last_names.add(last_name)
+            
+            # If multiple distinct last names, this is a true multi-player question
+            if len(last_names) > 1:
+                log_info(f"🚫 SINGLE PLAYER POLICY: Multi-player question detected after disambiguation")
+                log_info(f"🚫 SINGLE PLAYER POLICY: Original matches: {[p['name'] for p in all_matched_players]}")
+                log_info(f"🚫 SINGLE PLAYER POLICY: User selected: {selected_player['name']}")
+                
+                # Capture raw detections for enhanced blocker message
+                all_raw_detections = capture_all_raw_player_detections(original_question)
+                
+                # Create enhanced blocker message
+                if all_raw_detections:
+                    detected_names_str = ", ".join(all_raw_detections)
+                    blocker_message = f"You may only ask about one player. Your question has been blocked as you asked about [{detected_names_str}]"
+                else:
+                    # Fallback if raw detection failed
+                    validated_names_str = ", ".join([p['name'] for p in all_matched_players])
+                    blocker_message = f"You may only ask about one player. Your question has been blocked as you asked about [{validated_names_str}]"
+                
+                try:
+                    error_msg = await reaction.message.channel.send(blocker_message)
+                    await error_msg.delete(delay=10)
+                    log_info(f"✅ Sent single player policy blocker message")
+                except Exception as e:
+                    log_error(f"❌ Failed to send single player policy message: {e}")
+                
+                # Delete the original user message
+                try:
+                    await selection_data["original_user_message"].delete()
+                    log_info("✅ Deleted original user message after single player policy block")
+                except Exception as e:
+                    log_error(f"❌ Failed to delete original user message: {e}")
+                
+                # Log the single player policy violation
+                try:
+                    await log_analytics("Single Player Policy",
+                        user_id=user.id,
+                        user_name=user.display_name,
+                        channel=reaction.message.channel.name,
+                        question=original_question,
+                        validated_players=len(all_matched_players),
+                        raw_detections=len(all_raw_detections) if all_raw_detections else 0,
+                        detected_names=all_raw_detections if all_raw_detections else [p['name'] for p in all_matched_players],
+                        status="blocked_after_disambiguation",
+                        selected_player=selected_player['name']
+                    )
+                except Exception as e:
+                    log_error(f"❌ Failed to log single player policy analytics: {e}")
+                
+                return True  # Blocked by single player policy
+    
+    # 🔧 EXISTING: Check recent mentions for this specific player
     recent_mentions = await check_recent_player_mentions(reaction.message.guild, [selected_player])
     
     # DEBUG LOGGING - This will show us what's happening
