@@ -187,7 +187,7 @@ def fuzzy_match_players(text, max_results=8):
             if is_lastname_match and lastname_sim >= 0.75:
                 log_info(f"LAST NAME MATCH: '{potential_name}' → {player['name']} ({player['team']}) = {lastname_sim:.3f}")
                 matches.append((player, lastname_sim))
-                continue
+                # Don't continue - still check fuzzy matching for other players
             
             # Regular fuzzy matching
             similarity = SequenceMatcher(None, potential_name, player_name).ratio()
@@ -216,7 +216,7 @@ def fuzzy_match_players(text, max_results=8):
                 if len(word) >= 4 and word in player_last_name.lower():
                     is_substring_match = True
                     log_info(f"SUBSTRING DETECTED: Word '{word}' found in last name '{player_last_name}'")
-                    break
+                    break  # This break is OK - we just need to know if ANY word matches for this player
             
             # Also check if the full potential_name is a substring (original logic)
             if not is_substring_match and potential_name.lower() in player_last_name.lower():
