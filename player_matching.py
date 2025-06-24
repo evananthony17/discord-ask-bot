@@ -21,8 +21,8 @@ def extract_potential_names(text):
     potential_names = []
     
     # ENHANCED: Split text by common separators for multi-player detection
-    # Split by "and", "&", "vs", "versus", commas, etc.
-    segments = re.split(r'\s+(?:and|&|vs\.?|versus|,)\s+', text_normalized, flags=re.IGNORECASE)
+    # Split by "and", "&", "vs", "versus", commas, "/", "or", etc.
+    segments = re.split(r'\s+(?:and|&|vs\.?|versus|,|/|or)\s+', text_normalized, flags=re.IGNORECASE)
     
     if len(segments) > 1:
         log_info(f"MULTI-PLAYER: Split '{text}' into {len(segments)} segments: {segments}")
@@ -203,9 +203,18 @@ def fuzzy_match_players(text, max_results=8):
             else:
                 best_similarity = max(similarity, last_name_similarity)
             
-            # Dynamic threshold
+            # 🔧 ENHANCED: Context-aware dynamic threshold for substring matches
+            # Check if potential_name is a substring of player's last name (like "greene" in "Riley Greene")
+            player_last_name = player_name.split()[-1] if ' ' in player_name else player_name
+            is_substring_match = potential_name.lower() in player_last_name.lower()
+            
+            # Dynamic threshold with substring detection
             if exact_last_name_match:
                 threshold = 0.7
+            elif is_substring_match and len(potential_name) >= 4:
+                # 🔧 FIX: Lower threshold for substring matches (like "greene" matching "Riley Greene")
+                threshold = 0.6  # Allow Riley Greene (0.667) and Isaiah Greene (0.643) to pass
+                log_info(f"SUBSTRING THRESHOLD: Lowered to {threshold} for '{potential_name}' in '{player_last_name}'")
             elif ' ' in player_name and ' ' not in potential_name:
                 threshold = 0.85 if last_name_similarity < 0.9 else 0.7
             else:
@@ -425,8 +434,15 @@ def check_player_mentioned(text):
     if unique_detected_players:
         log_info(f"MULTI-PLAYER DETECTION: Found {len(unique_detected_players)} unique players")
         
-        # Apply validation to all detected players
-        validated_players = validate_player_matches(text, unique_detected_players)
+        # 🔧 FIX: For multi-player detection, use less strict validation
+        # The validation was designed for single-player questions and is too strict for multi-player
+        if len(unique_detected_players) > 1:
+            log_info(f"MULTI-PLAYER DETECTION: Skipping strict validation for {len(unique_detected_players)} players")
+            # Return all detected players without strict validation for multi-player cases
+            validated_players = unique_detected_players
+        else:
+            # Apply normal validation for single player
+            validated_players = validate_player_matches(text, unique_detected_players)
         
         duration_ms = int((datetime.now() - start_time).total_seconds() * 1000)
         asyncio.create_task(log_analytics("Player Search",
