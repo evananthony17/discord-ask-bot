@@ -206,7 +206,22 @@ def fuzzy_match_players(text, max_results=8):
             # 🔧 ENHANCED: Context-aware dynamic threshold for substring matches
             # Check if potential_name is a substring of player's last name (like "greene" in "Riley Greene")
             player_last_name = player_name.split()[-1] if ' ' in player_name else player_name
-            is_substring_match = potential_name.lower() in player_last_name.lower()
+            
+            # Test both the full potential_name and individual words for substring matches
+            is_substring_match = False
+            potential_words = potential_name.lower().split()
+            
+            # Check if any word in potential_name is a substring of the player's last name
+            for word in potential_words:
+                if len(word) >= 4 and word in player_last_name.lower():
+                    is_substring_match = True
+                    log_info(f"SUBSTRING DETECTED: Word '{word}' found in last name '{player_last_name}'")
+                    break
+            
+            # Also check if the full potential_name is a substring (original logic)
+            if not is_substring_match and potential_name.lower() in player_last_name.lower():
+                is_substring_match = True
+                log_info(f"FULL SUBSTRING DETECTED: '{potential_name}' found in last name '{player_last_name}'")
             
             # Dynamic threshold with substring detection
             if exact_last_name_match:
