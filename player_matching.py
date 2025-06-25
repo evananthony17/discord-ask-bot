@@ -280,39 +280,77 @@ def fuzzy_match_players(text, max_results=8):
                 matches.append((player, lastname_sim))
                 # Don't continue - still check fuzzy matching for other players
             
-            # Regular fuzzy matching
+            # 🔧 CRITICAL FIX: Enhanced fuzzy matching against individual name parts
             similarity = SequenceMatcher(None, potential_name, player_name).ratio()
             
-            # Special handling for last names
-            player_last_name = player_name.split()[-1] if ' ' in player_name else player_name
-            last_name_similarity = SequenceMatcher(None, potential_name, player_last_name).ratio()
-            exact_last_name_match = potential_name == player_last_name
+            # Get all name parts for comparison
+            player_name_parts = player_name.split() if ' ' in player_name else [player_name]
+            player_first_name = player_name_parts[0] if len(player_name_parts) > 0 else ""
+            player_last_name = player_name_parts[-1] if len(player_name_parts) > 0 else ""
             
-            # Use the better of full name match or last name match
-            if exact_last_name_match:
+            # Compare against each name part individually
+            name_part_similarities = []
+            for name_part in player_name_parts:
+                part_similarity = SequenceMatcher(None, potential_name, name_part).ratio()
+                name_part_similarities.append(part_similarity)
+                if part_similarity == 1.0:  # Exact match with any name part
+                    log_info(f"EXACT NAME PART MATCH: '{potential_name}' = '{name_part}' (1.000)")
+            
+            # Get the best similarity from all comparisons
+            best_name_part_similarity = max(name_part_similarities) if name_part_similarities else 0.0
+            exact_last_name_match = potential_name == player_last_name
+            exact_first_name_match = potential_name == player_first_name
+            
+            # Use the best similarity from all possible matches
+            if exact_last_name_match or exact_first_name_match:
                 best_similarity = 1.0
             else:
-                best_similarity = max(similarity, last_name_similarity)
+                best_similarity = max(similarity, best_name_part_similarity)
             
-            # 🔧 ENHANCED: Context-aware dynamic threshold for substring matches
-            # Check if potential_name is a substring of player's last name (like "greene" in "Riley Greene")
-            player_last_name = player_name.split()[-1] if ' ' in player_name else player_name
+            # Log the comparison details for debugging
+            if best_name_part_similarity > similarity:
+                log_info(f"NAME PART MATCH BETTER: '{potential_name}' vs '{player_name}' - full: {similarity:.3f}, best part: {best_name_part_similarity:.3f}")
+            
+            # 🔧 CRITICAL FIX: Enhanced substring detection for BOTH first and last names
+            # Check if potential_name is a substring of ANY part of the player's name
+            player_name_parts = player_name.split() if ' ' in player_name else [player_name]
+            player_first_name = player_name_parts[0] if len(player_name_parts) > 0 else ""
+            player_last_name = player_name_parts[-1] if len(player_name_parts) > 0 else ""
             
             # Test both the full potential_name and individual words for substring matches
             is_substring_match = False
             potential_words = potential_name.lower().split()
             
-            # Check if any word in potential_name is a substring of the player's last name
+            # 🔧 FIX: Check if any word in potential_name matches ANY part of the player's name
             for word in potential_words:
-                if len(word) >= 4 and word in player_last_name.lower():
-                    is_substring_match = True
-                    log_info(f"SUBSTRING DETECTED: Word '{word}' found in last name '{player_last_name}'")
-                    break  # This break is OK - we just need to know if ANY word matches for this player
+                if len(word) >= 4:
+                    # Check against first name
+                    if word in player_first_name.lower():
+                        is_substring_match = True
+                        log_info(f"SUBSTRING DETECTED: Word '{word}' found in first name '{player_first_name}'")
+                        break
+                    # Check against last name  
+                    elif word in player_last_name.lower():
+                        is_substring_match = True
+                        log_info(f"SUBSTRING DETECTED: Word '{word}' found in last name '{player_last_name}'")
+                        break
+                    # Check against any other name parts (middle names, etc.)
+                    else:
+                        for name_part in player_name_parts:
+                            if word in name_part.lower():
+                                is_substring_match = True
+                                log_info(f"SUBSTRING DETECTED: Word '{word}' found in name part '{name_part}'")
+                                break
+                        if is_substring_match:
+                            break
             
-            # Also check if the full potential_name is a substring (original logic)
-            if not is_substring_match and potential_name.lower() in player_last_name.lower():
-                is_substring_match = True
-                log_info(f"FULL SUBSTRING DETECTED: '{potential_name}' found in last name '{player_last_name}'")
+            # Also check if the full potential_name is a substring of any name part
+            if not is_substring_match:
+                for name_part in player_name_parts:
+                    if potential_name.lower() in name_part.lower():
+                        is_substring_match = True
+                        log_info(f"FULL SUBSTRING DETECTED: '{potential_name}' found in name part '{name_part}'")
+                        break
             
             # Dynamic threshold with substring detection
             if exact_last_name_match:
@@ -322,6 +360,8 @@ def fuzzy_match_players(text, max_results=8):
                 threshold = 0.6  # Allow Riley Greene (0.667) and Isaiah Greene (0.643) to pass
                 log_info(f"SUBSTRING THRESHOLD: Lowered to {threshold} for '{potential_name}' in '{player_last_name}'")
             elif ' ' in player_name and ' ' not in potential_name:
+                # Calculate last_name_similarity for threshold logic
+                last_name_similarity = SequenceMatcher(None, potential_name, player_last_name).ratio()
                 threshold = 0.85 if last_name_similarity < 0.9 else 0.7
             else:
                 threshold = 0.7
