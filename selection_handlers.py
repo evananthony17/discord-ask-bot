@@ -150,11 +150,11 @@ async def handle_disambiguation_selection(reaction, user, selected_player, selec
                 # Create enhanced blocker message
                 if all_raw_detections:
                     detected_names_str = ", ".join(all_raw_detections)
-                    blocker_message = f"You may only ask about one player. Your question has been blocked as you asked about [{detected_names_str}]"
+                    blocker_message = f"You may only ask about one player. Your question has been blocked as you asked about: {detected_names_str}"
                 else:
                     # Fallback if raw detection failed
                     validated_names_str = ", ".join([p['name'] for p in all_matched_players])
-                    blocker_message = f"You may only ask about one player. Your question has been blocked as you asked about [{validated_names_str}]"
+                    blocker_message = f"You may only ask about one player. Your question has been blocked as you asked about: {validated_names_str}"
                 
                 try:
                     error_msg = await reaction.message.channel.send(blocker_message)

@@ -26,11 +26,11 @@ async def handle_multi_player_question(ctx, question, matched_players, question_
     # Create enhanced blocker message showing ALL detected names (including false positives)
     if all_raw_detections:
         detected_names_str = ", ".join(all_raw_detections)
-        blocker_message = f"You may only ask about one player. Your question has been blocked as you asked about [{detected_names_str}]"
+        blocker_message = f"You may only ask about one player. Your question has been blocked as you asked about: {detected_names_str}"
     else:
         # Fallback if raw detection failed
         validated_names_str = ", ".join([p['name'] for p in matched_players])
-        blocker_message = f"You may only ask about one player. Your question has been blocked as you asked about [{validated_names_str}]"
+        blocker_message = f"You may only ask about one player. Your question has been blocked as you asked about: {validated_names_str}"
     
     try:
         await ctx.message.delete()
