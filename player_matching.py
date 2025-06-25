@@ -7,6 +7,92 @@ from utils import normalize_name, expand_nicknames, is_likely_player_request
 from logging_system import log_analytics, log_info
 from player_matching_validator import validate_player_matches
 
+# -------- SEGMENT CLEANING --------
+
+def clean_segment_for_player_matching(segment):
+    """🔧 NEW: Clean segments of context words that aren't player names"""
+    # Remove common context words that contaminate player name segments
+    context_words = {
+        'go', 'going', 'diamond', 'diamonds', 'gold', 'silver', 'bronze',
+        'will', 'would', 'should', 'could', 'can', 'may', 'might',
+        'be', 'being', 'been', 'is', 'are', 'was', 'were',
+        'have', 'has', 'had', 'do', 'does', 'did',
+        'get', 'getting', 'got', 'make', 'making', 'made',
+        'take', 'taking', 'took', 'give', 'giving', 'gave',
+        'come', 'coming', 'came', 'see', 'seeing', 'saw',
+        'know', 'knowing', 'knew', 'think', 'thinking', 'thought',
+        'want', 'wanting', 'wanted', 'need', 'needing', 'needed',
+        'like', 'liking', 'liked', 'love', 'loving', 'loved',
+        'help', 'helping', 'helped', 'try', 'trying', 'tried',
+        'work', 'working', 'worked', 'play', 'playing', 'played',
+        'look', 'looking', 'looked', 'find', 'finding', 'found',
+        'feel', 'feeling', 'felt', 'seem', 'seeming', 'seemed',
+        'become', 'becoming', 'became', 'leave', 'leaving', 'left',
+        'move', 'moving', 'moved', 'turn', 'turning', 'turned',
+        'start', 'starting', 'started', 'stop', 'stopping', 'stopped',
+        'keep', 'keeping', 'kept', 'hold', 'holding', 'held',
+        'bring', 'bringing', 'brought', 'put', 'putting',
+        'set', 'setting', 'run', 'running', 'ran',
+        'walk', 'walking', 'walked', 'talk', 'talking', 'talked',
+        'ask', 'asking', 'asked', 'tell', 'telling', 'told',
+        'show', 'showing', 'showed', 'hear', 'hearing', 'heard',
+        'read', 'reading', 'write', 'writing', 'wrote',
+        'sit', 'sitting', 'sat', 'stand', 'standing', 'stood',
+        'win', 'winning', 'won', 'lose', 'losing', 'lost',
+        'buy', 'buying', 'bought', 'sell', 'selling', 'sold',
+        'pay', 'paying', 'paid', 'cost', 'costing',
+        'spend', 'spending', 'spent', 'save', 'saving', 'saved',
+        'open', 'opening', 'opened', 'close', 'closing', 'closed',
+        'cut', 'cutting', 'break', 'breaking', 'broke', 'broken',
+        'build', 'building', 'built', 'grow', 'growing', 'grew',
+        'change', 'changing', 'changed', 'happen', 'happening', 'happened',
+        'live', 'living', 'lived', 'die', 'dying', 'died',
+        'kill', 'killing', 'killed', 'eat', 'eating', 'ate',
+        'drink', 'drinking', 'drank', 'sleep', 'sleeping', 'slept',
+        'wake', 'waking', 'woke', 'drive', 'driving', 'drove',
+        'ride', 'riding', 'rode', 'fly', 'flying', 'flew',
+        'swim', 'swimming', 'swam', 'dance', 'dancing', 'danced',
+        'sing', 'singing', 'sang', 'laugh', 'laughing', 'laughed',
+        'cry', 'crying', 'cried', 'smile', 'smiling', 'smiled',
+        # Question words and punctuation
+        'what', 'when', 'where', 'why', 'who', 'how',
+        'which', 'whose', 'whom', 'whether',
+        # Common endings that indicate context
+        '?', '!', '.', ',', ';', ':', '"', "'",
+        # Fantasy baseball specific context
+        'fantasy', 'points', 'score', 'scoring', 'stats', 'statistics',
+        'projection', 'projections', 'value', 'worth', 'price', 'cost',
+        'draft', 'drafting', 'drafted', 'pick', 'picking', 'picked',
+        'trade', 'trading', 'traded', 'drop', 'dropping', 'dropped',
+        'add', 'adding', 'added', 'waiver', 'waivers', 'wire',
+        'roster', 'lineup', 'bench', 'start', 'starter', 'starting',
+        'sit', 'bench', 'benching', 'benched'
+    }
+    
+    # Split segment into words
+    words = segment.lower().split()
+    
+    # Filter out context words and punctuation
+    cleaned_words = []
+    for word in words:
+        # Remove punctuation from word
+        clean_word = re.sub(r'[^\w\s]', '', word)
+        
+        # Keep word if it's not a context word and has reasonable length
+        if (clean_word not in context_words and 
+            len(clean_word) >= 3 and 
+            clean_word.isalpha()):
+            cleaned_words.append(clean_word)
+    
+    # Return cleaned segment
+    cleaned_segment = ' '.join(cleaned_words)
+    
+    # If cleaning removed everything, return the original (but trimmed)
+    if not cleaned_segment.strip():
+        return segment.strip()
+    
+    return cleaned_segment
+
 # -------- NAME EXTRACTION --------
 
 def extract_potential_names(text):
@@ -29,10 +115,12 @@ def extract_potential_names(text):
         
         # Process each segment individually and normalize
         for i, segment in enumerate(segments):
-            segment_normalized = normalize_name(segment.strip())
+            # 🔧 CRITICAL FIX: Clean segments of context words before normalizing
+            segment_cleaned = clean_segment_for_player_matching(segment.strip())
+            segment_normalized = normalize_name(segment_cleaned)
             if len(segment_normalized) >= 3:  # Reasonable minimum length
                 potential_names.append(segment_normalized)
-                log_info(f"MULTI-PLAYER: Segment {i+1}: '{segment}' → '{segment_normalized}'")
+                log_info(f"MULTI-PLAYER: Segment {i+1}: '{segment}' → '{segment_cleaned}' → '{segment_normalized}'")
     
     # For single segment (no separators found), use the original logic
     text_normalized = normalize_name(text)
@@ -41,7 +129,7 @@ def extract_potential_names(text):
     stop_words = {
         'how', 'is', 'was', 'are', 'were', 'doing', 'playing', 'performed', 
         'the', 'a', 'an', 'about', 'what', 'when', 'where', 'why', 'who',
-        'should', 'would', 'could', 'can', 'will', 'today', 'yesterday', 
+        'should', 'would', 'could', 'can', 'will', 'today', 'yesterday',
         'tomorrow', 'this', 'that', 'these', 'those', 'season', 'year', 
         'game', 'games', 'update', 'on', 'for', 'with', 'any', 'get', 'stats',
         'more', 'like', 'than', 'then', 'just', 'only', 'also', 'even',
