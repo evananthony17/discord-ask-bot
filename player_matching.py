@@ -17,22 +17,25 @@ def extract_potential_names(text):
         log_info(f"NAME EXTRACTION: Expanded '{text}' to '{expanded_text}'")
         text = expanded_text
     
-    text_normalized = normalize_name(text)
+    # 🔧 CRITICAL FIX: Split by separators BEFORE normalizing to preserve commas
+    # Split by "and", "&", "vs", "versus", commas, "/", "or", etc.
+    segments = re.split(r'\s*(?:and|&|vs\.?|versus|,|/|or)\s*', text, flags=re.IGNORECASE)
+    
     potential_names = []
     
-    # ENHANCED: Split text by common separators for multi-player detection
-    # Split by "and", "&", "vs", "versus", commas, "/", "or", etc.
-    segments = re.split(r'\s+(?:and|&|vs\.?|versus|,|/|or)\s+', text_normalized, flags=re.IGNORECASE)
-    
+    # Now normalize each segment individually
     if len(segments) > 1:
         log_info(f"MULTI-PLAYER: Split '{text}' into {len(segments)} segments: {segments}")
         
-        # Process each segment individually
+        # Process each segment individually and normalize
         for i, segment in enumerate(segments):
-            segment = segment.strip()
-            if len(segment) >= 3:  # Reasonable minimum length
-                potential_names.append(segment)
-                log_info(f"MULTI-PLAYER: Segment {i+1}: '{segment}'")
+            segment_normalized = normalize_name(segment.strip())
+            if len(segment_normalized) >= 3:  # Reasonable minimum length
+                potential_names.append(segment_normalized)
+                log_info(f"MULTI-PLAYER: Segment {i+1}: '{segment}' → '{segment_normalized}'")
+    
+    # For single segment (no separators found), use the original logic
+    text_normalized = normalize_name(text)
     
     # EXPANDED: Remove common question words and phrases
     stop_words = {
