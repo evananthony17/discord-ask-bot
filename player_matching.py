@@ -570,13 +570,49 @@ def capture_all_raw_player_detections(text):
 
 # -------- MAIN PLAYER CHECKING FUNCTION --------
 
-def check_player_mentioned(text):
-    """🔧 FIXED: Check if any player is mentioned with MULTI-PLAYER detection integration"""
+def detect_players_unified(text):
+    """
+    Universal player detection with memory leak protection.
+    Single entry point for ALL player detection to ensure consistent behavior.
+    """
+    # 🚨 UNIVERSAL PROTECTION: Block long sentences FIRST
+    word_count = len(text.split())
+    if word_count > 4:
+        print(f"🚨 BLOCKING detection for long text ({word_count} words): '{text}'")
+        log_info(f"BLOCKING detection for long text ({word_count} words): '{text}'")
+        return []
+    
+    print(f"🚨 PROCEEDING with unified detection for: '{text}'")
+    log_info(f"PROCEEDING with unified detection for: '{text}'")
+    
+    # Use existing detection logic in priority order
+    # Step 1: Try exact matches first (fastest)
+    try:
+        exact_matches = find_exact_player_matches(text)
+        if exact_matches:
+            print(f"🚨 Found via exact match: {len(exact_matches)} players")
+            log_info(f"Found via exact match: {len(exact_matches)} players")
+            return exact_matches
+    except Exception as e:
+        print(f"🚨 Error in exact matching: {e}")
+        log_info(f"Error in exact matching: {e}")
+    
+    # Step 2: Try the existing player detection logic
+    try:
+        # Use the current check_player_mentioned logic but with our protection
+        return check_player_mentioned_original(text)
+    except Exception as e:
+        print(f"🚨 Error in existing detection: {e}")
+        log_info(f"Error in existing detection: {e}")
+        return []
+
+def check_player_mentioned_original(text):
+    """🔧 ORIGINAL: Check if any player is mentioned with MULTI-PLAYER detection integration"""
     start_time = datetime.now()
     
     # 🚨 EMERGENCY DEBUG: Add immediate debug logging
-    print(f"🚨 DEBUG: check_player_mentioned() called with: '{text}'")
-    log_info(f"🚨 DEBUG: check_player_mentioned() called with: '{text}'")
+    print(f"🚨 DEBUG: check_player_mentioned_original() called with: '{text}'")
+    log_info(f"🚨 DEBUG: check_player_mentioned_original() called with: '{text}'")
     
     log_info(f"CHECK PLAYER: Looking for players in '{text}'")
     
@@ -959,3 +995,9 @@ def check_player_mentioned(text):
         matches_found=0, search_type="no_match"
     ))
     return None
+
+def check_player_mentioned(text):
+    """
+    Main entry point for player detection - now uses unified protection.
+    """
+    return detect_players_unified(text)
