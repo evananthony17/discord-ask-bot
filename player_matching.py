@@ -267,11 +267,37 @@ def check_last_name_match(potential_name, player_name):
 # -------- FUZZY MATCHING --------
 
 def fuzzy_match_players(text, max_results=8):
-    """FIXED: Fuzzy match player names and return ALL matches above threshold"""
+    """
+    Fuzzy matching with universal protection against long text processing.
+    This is the source-level protection that blocks ALL bypass pathways.
+    """
+    # 🚨 UNIVERSAL PROTECTION: Block long sentences at the source
+    word_count = len(text.split())
+    if word_count > 3:  # Lowered from 4 to 3 for better protection
+        print(f"🚨 BLOCKING fuzzy matching: '{text}' ({word_count} words)")
+        log_info(f"BLOCKING fuzzy matching: '{text}' ({word_count} words)")
+        return []
     
-    # 🚨 EMERGENCY DEBUG: Add immediate debug logging
-    print(f"🚨 DEBUG: fuzzy_match_players() called with: '{text}'")
-    log_info(f"🚨 DEBUG: fuzzy_match_players() called with: '{text}'")
+    # 🚨 VOLUME PROTECTION: Block obviously nonsensical combinations
+    nonsensical_words = {'good', 'bad', 'great', 'terrible', 'awesome', 'horrible', 'amazing', 'awful',
+                        'is', 'are', 'was', 'were', 'be', 'been', 'being',
+                        'the', 'and', 'or', 'but', 'if', 'then', 'when', 'where', 'why', 'how',
+                        'very', 'really', 'quite', 'pretty', 'much', 'many', 'some', 'all',
+                        'looking', 'going', 'coming', 'getting', 'having', 'doing', 'playing'}
+    
+    if any(word in text.lower() for word in nonsensical_words):
+        print(f"🚨 BLOCKING nonsensical combination: '{text}'")
+        log_info(f"BLOCKING nonsensical combination: '{text}'")
+        return []
+    
+    print(f"🚨 PROCEEDING with fuzzy matching: '{text}' ({word_count} words)")
+    log_info(f"PROCEEDING with fuzzy matching: '{text}' ({word_count} words)")
+    
+    # 🔍 DEBUG: Show call trace to monitor all fuzzy matching attempts
+    import traceback
+    print(f"🔍 FUZZY CALL TRACE: '{text}' from:")
+    for line in traceback.format_stack()[-3:-1]:
+        print(f"   {line.strip()}")
     
     log_info(f"FUZZY MATCH: Starting for '{text}'")
     log_info(f"FUZZY MATCH Starting", f"Query: '{text}'")
@@ -279,20 +305,6 @@ def fuzzy_match_players(text, max_results=8):
     if not players_data:
         log_info(f"FUZZY MATCH: No players data available")
         return []
-    
-    # 🔧 SURGICAL FIX #2: Prevent full sentences from reaching fuzzy matching
-    word_count = len(text.split())
-    print(f"🚨 DEBUG: Word count: {word_count}")
-    log_info(f"🚨 DEBUG: Word count: {word_count}")
-    
-    if word_count > 4:  # No fuzzy matching for long sentences
-        print(f"🚨 DEBUG: BLOCKING - Too many words ({word_count}): '{text}'")
-        log_info(f"🚨 DEBUG: BLOCKING - Too many words ({word_count}): '{text}'")
-        log_info(f"SKIPPING FUZZY: Too many words ({word_count}): '{text}'")
-        return []
-    
-    print(f"🚨 DEBUG: PROCEEDING with fuzzy matching for: '{text}'")
-    log_info(f"🚨 DEBUG: PROCEEDING with fuzzy matching for: '{text}'")
     
     # Extract potential player names from the text
     potential_names = extract_potential_names(text)
