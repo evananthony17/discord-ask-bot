@@ -95,13 +95,32 @@ def clean_segment_for_player_matching(segment):
 
 # -------- NAME EXTRACTION --------
 
+def find_exact_player_matches(text):
+    """🔧 SURGICAL FIX #1: Check for exact player name matches first"""
+    text_normalized = normalize_name(text)
+    exact_matches = []
+    
+    for player in players_data:
+        player_name_normalized = normalize_name(player['name'])
+        if player_name_normalized == text_normalized:
+            exact_matches.append(player)
+            log_info(f"EXACT MATCH FOUND: '{text}' → {player['name']} ({player['team']})")
+    
+    return exact_matches
+
 def extract_potential_names(text):
-    """ENHANCED: Extract potential player names with multi-player detection"""
+    """🔧 SURGICAL FIX #1: Enhanced name extraction with exact match priority"""
     # First expand nicknames
     expanded_text = expand_nicknames(text)
     if expanded_text != text:
         log_info(f"NAME EXTRACTION: Expanded '{text}' to '{expanded_text}'")
         text = expanded_text
+    
+    # 🔧 SURGICAL FIX #1: Try exact matches FIRST to prevent splitting
+    exact_matches = find_exact_player_matches(text)
+    if exact_matches:
+        log_info(f"EXACT MATCH PRIORITY: Found {len(exact_matches)} exact matches, stopping name extraction")
+        return [normalize_name(text)]  # Return only the exact match, don't split
     
     # 🔧 CRITICAL FIX: Split by separators BEFORE normalizing to preserve commas
     # Split by "and", "&", "vs", "versus", commas, "/", "or", etc.
@@ -255,6 +274,12 @@ def fuzzy_match_players(text, max_results=8):
     
     if not players_data:
         log_info(f"FUZZY MATCH: No players data available")
+        return []
+    
+    # 🔧 SURGICAL FIX #2: Prevent full sentences from reaching fuzzy matching
+    word_count = len(text.split())
+    if word_count > 4:  # No fuzzy matching for long sentences
+        log_info(f"SKIPPING FUZZY: Too many words ({word_count}): '{text}'")
         return []
     
     # Extract potential player names from the text
@@ -548,6 +573,17 @@ def check_player_mentioned(text):
         log_info(f"NICKNAME: Using expanded text: '{expanded_text}'")
         text = expanded_text
     
+    # 🔧 SURGICAL FIX #4: Add early exit for exact matches
+    exact_matches = find_exact_player_matches(text)
+    if exact_matches:
+        log_info(f"EARLY EXIT: Found {len(exact_matches)} exact matches, stopping all processing")
+        duration_ms = int((datetime.now() - start_time).total_seconds() * 1000)
+        asyncio.create_task(log_analytics("Player Search",
+            question=text, duration_ms=duration_ms, players_checked=len(players_data),
+            matches_found=len(exact_matches), players_found=exact_matches, search_type="exact_match_early_exit"
+        ))
+        return exact_matches
+    
     # 🔧 NEW: Use existing multi-player detection logic
     potential_names = extract_potential_names(text)
     all_detected_players = []
@@ -580,15 +616,9 @@ def check_player_mentioned(text):
     if unique_detected_players:
         log_info(f"MULTI-PLAYER DETECTION: Found {len(unique_detected_players)} unique players")
         
-        # 🔧 FIX: For multi-player detection, use less strict validation
-        # The validation was designed for single-player questions and is too strict for multi-player
-        if len(unique_detected_players) > 1:
-            log_info(f"MULTI-PLAYER DETECTION: Skipping strict validation for {len(unique_detected_players)} players")
-            # Return all detected players without strict validation for multi-player cases
-            validated_players = unique_detected_players
-        else:
-            # Apply normal validation for single player
-            validated_players = validate_player_matches(text, unique_detected_players)
+        # 🔧 SURGICAL FIX #3: ALWAYS validate, even for multi-player
+        validated_players = validate_player_matches(text, unique_detected_players)
+        log_info(f"MULTI-PLAYER VALIDATION: {len(unique_detected_players)} → {len(validated_players)}")
         
         duration_ms = int((datetime.now() - start_time).total_seconds() * 1000)
         asyncio.create_task(log_analytics("Player Search",
