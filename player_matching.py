@@ -269,6 +269,10 @@ def check_last_name_match(potential_name, player_name):
 def fuzzy_match_players(text, max_results=8):
     """FIXED: Fuzzy match player names and return ALL matches above threshold"""
     
+    # 🚨 EMERGENCY DEBUG: Add immediate debug logging
+    print(f"🚨 DEBUG: fuzzy_match_players() called with: '{text}'")
+    log_info(f"🚨 DEBUG: fuzzy_match_players() called with: '{text}'")
+    
     log_info(f"FUZZY MATCH: Starting for '{text}'")
     log_info(f"FUZZY MATCH Starting", f"Query: '{text}'")
     
@@ -278,9 +282,17 @@ def fuzzy_match_players(text, max_results=8):
     
     # 🔧 SURGICAL FIX #2: Prevent full sentences from reaching fuzzy matching
     word_count = len(text.split())
+    print(f"🚨 DEBUG: Word count: {word_count}")
+    log_info(f"🚨 DEBUG: Word count: {word_count}")
+    
     if word_count > 4:  # No fuzzy matching for long sentences
+        print(f"🚨 DEBUG: BLOCKING - Too many words ({word_count}): '{text}'")
+        log_info(f"🚨 DEBUG: BLOCKING - Too many words ({word_count}): '{text}'")
         log_info(f"SKIPPING FUZZY: Too many words ({word_count}): '{text}'")
         return []
+    
+    print(f"🚨 DEBUG: PROCEEDING with fuzzy matching for: '{text}'")
+    log_info(f"🚨 DEBUG: PROCEEDING with fuzzy matching for: '{text}'")
     
     # Extract potential player names from the text
     potential_names = extract_potential_names(text)
@@ -561,6 +573,10 @@ def capture_all_raw_player_detections(text):
 def check_player_mentioned(text):
     """🔧 FIXED: Check if any player is mentioned with MULTI-PLAYER detection integration"""
     start_time = datetime.now()
+    
+    # 🚨 EMERGENCY DEBUG: Add immediate debug logging
+    print(f"🚨 DEBUG: check_player_mentioned() called with: '{text}'")
+    log_info(f"🚨 DEBUG: check_player_mentioned() called with: '{text}'")
     
     log_info(f"CHECK PLAYER: Looking for players in '{text}'")
     
