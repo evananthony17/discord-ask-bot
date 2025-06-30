@@ -569,13 +569,20 @@ def capture_all_raw_player_detections(text):
                         all_detected_names.append(detected_name)
                         log_info(f"RAW DETECTION: Found lastname match '{lastname}' → {detected_name}")
     
-    # Fuzzy matching for additional detections
-    fuzzy_matches = fuzzy_match_players(text, max_results=20)  # Get more for raw detection
-    for player in fuzzy_matches:
-        detected_name = player['name']
+    # 🔧 FIX: Route through unified detection instead of direct fuzzy matching
+    unified_matches = detect_players_unified(text)
+    if unified_matches and isinstance(unified_matches, list):
+        for player in unified_matches:
+            detected_name = player['name']
+            if detected_name not in all_detected_names:
+                all_detected_names.append(detected_name)
+                log_info(f"RAW DETECTION: Found unified match → {detected_name}")
+    elif unified_matches:
+        # Single player returned
+        detected_name = unified_matches['name']
         if detected_name not in all_detected_names:
             all_detected_names.append(detected_name)
-            log_info(f"RAW DETECTION: Found fuzzy match → {detected_name}")
+            log_info(f"RAW DETECTION: Found unified match → {detected_name}")
     
     log_info(f"RAW DETECTION: Total detected names: {len(all_detected_names)} - {all_detected_names}")
     return all_detected_names
@@ -658,8 +665,13 @@ def check_player_mentioned_original(text):
     for potential_name in potential_names:
         log_info(f"PROCESSING POTENTIAL NAME: '{potential_name}'")
         
-        # Use existing fuzzy matching for each potential name
-        name_matches = fuzzy_match_players(potential_name, max_results=10)
+        # 🔧 FIX: Route through unified detection instead of direct fuzzy matching
+        name_matches = detect_players_unified(potential_name)
+        # Convert to list if single player returned
+        if name_matches and not isinstance(name_matches, list):
+            name_matches = [name_matches]
+        elif not name_matches:
+            name_matches = []
         
         if name_matches:
             log_info(f"FOUND MATCHES for '{potential_name}': {[p['name'] for p in name_matches]}")
