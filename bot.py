@@ -13,7 +13,7 @@ from config import (
     banned_categories, pending_selections, timeout_tasks, players_data
 )
 from logging_system import log_info, log_error, log_success, log_analytics, start_batching
-from utils import load_words_from_json, load_players_from_json, load_nicknames_from_json, is_likely_player_request
+from utils import load_words_from_json, load_players_from_json, load_nicknames_from_json, is_likely_player_request, normalize_name
 from validation import validate_question
 from player_matching import check_player_mentioned
 from recent_mentions import check_recent_player_mentions, check_fallback_recent_mentions
@@ -249,10 +249,10 @@ async def ask_question(ctx, *, question: str = None):
             if len(matched_players) > 1:
                 # 🔧 FIXED: Proper decision logic for disambiguation vs multi-player blocking
                 
-                # Check if all players share the same last name (ambiguous case)
+                # 🔧 CRITICAL FIX: Use normalize_name() instead of .lower() for accent handling
                 last_names = set()
                 for player in matched_players:
-                    last_name = player['name'].split()[-1].lower()
+                    last_name = normalize_name(player['name']).split()[-1]
                     last_names.add(last_name)
                 
                 log_info(f"DECISION LOGIC: Found {len(matched_players)} players with {len(last_names)} unique last names")

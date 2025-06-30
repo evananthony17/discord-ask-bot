@@ -379,7 +379,7 @@ def fuzzy_match_players(text, max_results=8):
                         log_info(f"SUBSTRING DETECTED: Word '{word}' found in first name '{player_first_name}'")
                         break
                     # Check against last name  
-                    elif word in player_last_name.lower():
+                    elif word in normalize_name(player_last_name):
                         is_substring_match = True
                         log_info(f"SUBSTRING DETECTED: Word '{word}' found in last name '{player_last_name}'")
                         break

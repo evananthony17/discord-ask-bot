@@ -2,6 +2,7 @@ import asyncio
 from datetime import datetime
 from config import SELECTION_TIMEOUT, pending_selections, timeout_tasks, FINAL_ANSWER_LINK
 from logging_system import log_warning, log_error, log_debug, log_success, log_analytics, log_info
+from utils import normalize_name
 
 # -------- ENHANCED TIMEOUT HANDLER --------
 
@@ -132,10 +133,10 @@ async def handle_disambiguation_selection(reaction, user, selected_player, selec
         
         # If question contains multi-player words, check if they're distinct players
         if any(indicator in question_lower for indicator in multi_player_indicators):
-            # Check if all players share the same last name (ambiguous case)
+            # 🔧 CRITICAL FIX: Use normalize_name() instead of .lower() for accent handling
             last_names = set()
             for player in all_matched_players:
-                last_name = player['name'].split()[-1].lower()
+                last_name = normalize_name(player['name']).split()[-1]
                 last_names.add(last_name)
             
             # If multiple distinct last names, this is a true multi-player question
