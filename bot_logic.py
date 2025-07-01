@@ -19,18 +19,12 @@ async def handle_multi_player_question(ctx, question, matched_players, question_
     # 🔧 NEW: Single Player Policy Enforcement
     log_info(f"🚫 SINGLE PLAYER POLICY: Question detected {len(matched_players)} validated players: {[p['name'] for p in matched_players]}")
     
-    # Capture raw detections for enhanced blocker message
-    all_raw_detections = capture_all_raw_player_detections(question)
-    log_info(f"🚫 SINGLE PLAYER POLICY: Raw detections were: {all_raw_detections}")
+    # 🔧 CRITICAL FIX: Use already detected players instead of re-running detection
+    # This prevents infinite loop where capture_all_raw_player_detections() calls the same detection again
+    validated_names_str = ", ".join([p['name'] for p in matched_players])
+    blocker_message = f"You may only ask about one player. Your question has been blocked as you asked about: {validated_names_str}"
     
-    # Create enhanced blocker message showing ALL detected names (including false positives)
-    if all_raw_detections:
-        detected_names_str = ", ".join(all_raw_detections)
-        blocker_message = f"You may only ask about one player. Your question has been blocked as you asked about: {detected_names_str}"
-    else:
-        # Fallback if raw detection failed
-        validated_names_str = ", ".join([p['name'] for p in matched_players])
-        blocker_message = f"You may only ask about one player. Your question has been blocked as you asked about: {validated_names_str}"
+    log_info(f"🚫 SINGLE PLAYER POLICY: Using validated players for blocker message: {validated_names_str}")
     
     try:
         await ctx.message.delete()
@@ -47,8 +41,7 @@ async def handle_multi_player_question(ctx, question, matched_players, question_
         channel=ctx.channel.name,
         question=question,
         validated_players=len(matched_players),
-        raw_detections=len(all_raw_detections) if all_raw_detections else 0,
-        detected_names=all_raw_detections if all_raw_detections else [p['name'] for p in matched_players],
+        detected_names=[p['name'] for p in matched_players],
         status="blocked_multi_player"
     )
     
