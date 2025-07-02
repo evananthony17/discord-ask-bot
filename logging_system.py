@@ -219,6 +219,16 @@ def log_success(message, details=None):
     print(f"SUCCESS: {message}")
     asyncio.create_task(log_to_discord_batched("SUCCESS", "Success", message, details))
 
+def log_memory_usage(stage, request_id=None):
+    """Log memory usage checkpoint for debugging purposes"""
+    # Simple memory usage logging without external dependencies
+    if request_id:
+        message = f"💾 MEMORY_CHECKPOINT [{request_id}]: {stage}"
+    else:
+        message = f"💾 MEMORY_CHECKPOINT: {stage}"
+    
+    log_debug(message)
+
 def log_resource_usage(stage, request_id=None):
     """Log resource usage checkpoint using built-in modules for debugging purposes"""
     try:
@@ -231,9 +241,9 @@ def log_resource_usage(stage, request_id=None):
         ref_count = sys.gettotalrefcount() if hasattr(sys, 'gettotalrefcount') else 'N/A'
         
         if request_id:
-            message = f"� RESOURCE_TRACE [{request_id}]: {stage} - Objects: {obj_count}, Refs: {ref_count}"
+            message = f"📊 RESOURCE_TRACE [{request_id}]: {stage} - Objects: {obj_count}, Refs: {ref_count}"
         else:
-            message = f"� RESOURCE_TRACE: {stage} - Objects: {obj_count}, Refs: {ref_count}"
+            message = f"📊 RESOURCE_TRACE: {stage} - Objects: {obj_count}, Refs: {ref_count}"
         
         log_info(message)
     except Exception as e:
