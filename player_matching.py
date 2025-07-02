@@ -1,11 +1,15 @@
 import re
 import asyncio
+import logging
 from datetime import datetime
 from difflib import SequenceMatcher
 from config import players_data
 from utils import normalize_name, expand_nicknames, is_likely_player_request
 from logging_system import log_analytics, log_info
 from player_matching_validator import validate_player_matches
+
+# Set up detection tracing logger
+logger = logging.getLogger(__name__)
 
 # -------- SEGMENT CLEANING --------
 
@@ -1024,4 +1028,18 @@ def check_player_mentioned(text):
     """
     Main entry point for player detection - now uses unified protection.
     """
-    return detect_players_unified(text)
+    # 🔍 DETECTION_TRACE: Entry point logging
+    logger.info(f"🔍 DETECTION_TRACE: Starting player detection for query: '{text[:50]}...'")
+    
+    result = detect_players_unified(text)
+    
+    # 🔍 DETECTION_TRACE: Exit point logging
+    if result:
+        if isinstance(result, list):
+            logger.info(f"🔍 DETECTION_TRACE: Detection complete, returning {len(result)} matches: {[p['name'] for p in result]}")
+        else:
+            logger.info(f"🔍 DETECTION_TRACE: Detection complete, returning single match: {result['name']}")
+    else:
+        logger.info(f"🔍 DETECTION_TRACE: Detection complete, returning no matches")
+    
+    return result

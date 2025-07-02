@@ -3,8 +3,45 @@
 import discord
 from discord.ext import commands
 import asyncio
+import logging
+import uuid
+import time
+import os
 from datetime import datetime, timedelta
 from question_map_store import load_question_map, save_question_map, append_question
+
+# Set up flow tracing logger
+logger = logging.getLogger(__name__)
+
+# -------- SIMPLE RESOURCE MONITORING --------
+def log_resource_usage(stage, request_id=None):
+    """Log resource usage checkpoint using built-in modules"""
+    try:
+        import gc
+        import sys
+        
+        # Get object count as a proxy for memory usage
+        obj_count = len(gc.get_objects())
+        # Get reference count for tracking potential memory leaks
+        ref_count = sys.gettotalrefcount() if hasattr(sys, 'gettotalrefcount') else 'N/A'
+        
+        if request_id:
+            logger.info(f"📊 RESOURCE_TRACE [{request_id}]: {stage} - Objects: {obj_count}, Refs: {ref_count}")
+        else:
+            logger.info(f"📊 RESOURCE_TRACE: {stage} - Objects: {obj_count}, Refs: {ref_count}")
+    except Exception as e:
+        if request_id:
+            logger.warning(f"📊 RESOURCE_TRACE [{request_id}]: Could not get resource usage for {stage}: {e}")
+        else:
+            logger.warning(f"📊 RESOURCE_TRACE: Could not get resource usage for {stage}: {e}")
+
+# -------- STAGE MONITORING UTILITY --------
+def log_stage_info(stage, request_id=None):
+    """Log processing stage for debugging (no external dependencies)"""
+    if request_id:
+        logger.info(f"📍 STAGE_TRACE [{request_id}]: {stage}")
+    else:
+        logger.info(f"� STAGE_TRACE: {stage}")
 
 # Import all our modules
 from config import (
@@ -12,7 +49,7 @@ from config import (
     FINAL_ANSWER_LINK, PRE_SELECTION_DELAY, REACTIONS, 
     banned_categories, pending_selections, timeout_tasks, players_data
 )
-from logging_system import log_info, log_error, log_success, log_analytics, start_batching
+from logging_system import log_info, log_error, log_success, log_analytics, start_batching, log_memory_usage
 from utils import load_words_from_json, load_players_from_json, load_nicknames_from_json, is_likely_player_request, normalize_name
 from validation import validate_question
 from player_matching import check_player_mentioned
@@ -180,23 +217,34 @@ async def on_message(message):
 # -------- COMMAND: !ask --------
 @bot.command(name="ask")
 async def ask_question(ctx, *, question: str = None):
+    # 🆔 REQUEST TRACKING: Generate unique request ID and start timing
+    request_id = str(uuid.uuid4())[:8]
+    start_time = time.time()
+    logger.info(f"🆔 REQUEST_TRACE: Starting request {request_id}")
+    logger.info(f"🔵 FLOW_TRACE [{request_id}]: Starting message processing for: '{question[:50] if question else 'None'}...'")
+    log_memory_usage("Request Start", request_id)
+    
     if ctx.channel.name != SUBMISSION_CHANNEL:
+        logger.info(f"🔴 FLOW_TRACE [{request_id}]: Wrong channel, exiting early")
         error_msg = await ctx.send(f"Please use this command in #{SUBMISSION_CHANNEL}")
         await error_msg.delete(delay=5)
         return
 
     if question is None:
+        logger.info(f"🔴 FLOW_TRACE [{request_id}]: No question provided, exiting early")
         error_msg = await ctx.send("Please provide a question. Usage: `!ask your question here`")
         await error_msg.delete(delay=5)
         return
 
     # DUPLICATE PREVENTION - Check if user is already being processed
     if ctx.author.id in processing_users:
+        logger.info(f"🔴 FLOW_TRACE [{request_id}]: Duplicate prevention triggered, exiting early")
         log_info(f"DUPLICATE PREVENTION: User {ctx.author.id} already being processed, ignoring duplicate")
         return
     
     # Add user to processing set
     processing_users.add(ctx.author.id)
+    logger.info(f"🟡 FLOW_TRACE [{request_id}]: Added user to processing set, continuing with validation")
     
     try:
         # Prevent duplicate processing - check if user already has pending selection
@@ -205,8 +253,10 @@ async def ask_question(ctx, *, question: str = None):
             return
 
         # Validate question through all checks
+        logger.info(f"🟡 FLOW_TRACE [{request_id}]: Starting question validation")
         is_valid, error_message, error_category = validate_question(question)
         if not is_valid:
+            logger.info(f"🔴 FLOW_TRACE [{request_id}]: Question validation failed: {error_category}")
             try:
                 await ctx.message.delete()
             except:
@@ -217,6 +267,7 @@ async def ask_question(ctx, *, question: str = None):
 
         # Check for player names
         if not players_data:
+            logger.info(f"🔴 FLOW_TRACE [{request_id}]: No player data available, exiting")
             error_msg = await ctx.send("Player database is not available. Please try again later.")
             await error_msg.delete(delay=5)
             try:
@@ -225,7 +276,11 @@ async def ask_question(ctx, *, question: str = None):
                 pass
             return
         
+        logger.info(f"🟡 FLOW_TRACE [{request_id}]: Starting player detection")
+        log_resource_usage("Before Player Detection", request_id)
         matched_players = check_player_mentioned(question)
+        logger.info(f"🟡 FLOW_TRACE [{request_id}]: Player detection completed, moving to decision logic")
+        log_resource_usage("After Player Detection", request_id)
         
         # Fallback check for potential player words - but respect validation
         fallback_recent_check = False
@@ -245,8 +300,13 @@ async def ask_question(ctx, *, question: str = None):
                     fallback_recent_check = False
 
         if matched_players:
+            logger.info(f"🟠 FLOW_TRACE [{request_id}]: Entering decision routing with {len(matched_players)} detected players")
+            log_resource_usage("Before Decision Routing", request_id)
+            
             # Handle multiple players
             if len(matched_players) > 1:
+                logger.info(f"🟠 FLOW_TRACE [{request_id}]: Multiple players detected, analyzing last names")
+                
                 # 🔧 FIXED: Proper decision logic for disambiguation vs multi-player blocking
                 
                 # 🔧 CRITICAL FIX: Use normalize_name() instead of .lower() for accent handling
@@ -261,19 +321,25 @@ async def ask_question(ctx, *, question: str = None):
                 
                 if len(last_names) == 1:
                     # All players share same last name = ambiguous single player = DISAMBIGUATE
+                    logger.info(f"🟢 FLOW_TRACE [{request_id}]: Same last name detected → DISAMBIGUATION")
                     log_info(f"DECISION LOGIC: Same last name detected → DISAMBIGUATION")
                     from selection_handlers import create_player_disambiguation_prompt
                     await create_player_disambiguation_prompt(ctx, question, matched_players)
+                    logger.info(f"✅ FLOW_TRACE [{request_id}]: Disambiguation prompt created successfully")
                     return
                 else:
                     # Multiple distinct last names = true multi-player question = BLOCK
+                    logger.info(f"🟢 FLOW_TRACE [{request_id}]: Multiple distinct last names → MULTI-PLAYER BLOCK")
                     log_info(f"DECISION LOGIC: Multiple distinct last names → MULTI-PLAYER BLOCK")
                     await handle_multi_player_question(ctx, question, matched_players, question_map)
+                    logger.info(f"✅ FLOW_TRACE [{request_id}]: Multi-player block executed successfully")
                     return
             
             # Handle single player
             else:
+                logger.info(f"🟢 FLOW_TRACE [{request_id}]: Single player detected, processing")
                 await handle_single_player_question(ctx, question, matched_players, question_map)
+                logger.info(f"✅ FLOW_TRACE [{request_id}]: Single player processing completed")
                 return
             
         elif fallback_recent_check:
@@ -291,11 +357,31 @@ async def ask_question(ctx, *, question: str = None):
                 return
 
         # All checks passed - post question
+        logger.info(f"🟢 FLOW_TRACE [{request_id}]: All checks passed, posting approved question")
+        log_resource_usage("Before Question Posting", request_id)
         await process_approved_question(ctx.channel, ctx.author, question, ctx.message, question_map)
+        logger.info(f"✅ FLOW_TRACE [{request_id}]: Question posted successfully")
+        
+        # Final completion logging
+        duration = time.time() - start_time
+        logger.info(f"🆔 REQUEST_TRACE: Completed request {request_id} in {duration:.2f}s")
+        logger.info(f"✅ FLOW_TRACE [{request_id}]: Message processing complete")
+        log_resource_usage("After Processing Complete", request_id)
+        
+    except Exception as e:
+        # Exception handling with flow tracing
+        duration = time.time() - start_time
+        logger.error(f"❌ FLOW_TRACE [{request_id}]: Exception occurred in message processing: {str(e)}")
+        logger.error(f"🆔 REQUEST_TRACE: Failed request {request_id} after {duration:.2f}s - {str(e)}")
+        log_memory_usage("Exception Occurred", request_id)
+        
+        # Re-raise the exception to maintain existing error handling
+        raise
         
     finally:
         # Always remove user from processing set when done
         processing_users.discard(ctx.author.id)
+        logger.info(f"🧹 FLOW_TRACE [{request_id}]: Cleaned up processing user from set")
 
 # -------- REACTION HANDLER --------
 # -------- ENHANCED REACTION HANDLER WITH SAFEGUARDS --------

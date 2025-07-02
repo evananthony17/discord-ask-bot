@@ -218,3 +218,38 @@ def log_success(message, details=None):
     """Log success message"""
     print(f"SUCCESS: {message}")
     asyncio.create_task(log_to_discord_batched("SUCCESS", "Success", message, details))
+
+def log_memory_usage(stage, request_id=None):
+    """Log memory usage checkpoint for debugging purposes (fallback only)"""
+    # Simple fallback logging without external dependencies
+    if request_id:
+        message = f"💾 MEMORY_TRACE [{request_id}]: {stage} - Basic checkpoint"
+    else:
+        message = f"💾 MEMORY_TRACE: {stage} - Basic checkpoint"
+    
+    log_debug(message)
+
+def log_resource_usage(stage, request_id=None):
+    """Log resource usage checkpoint using built-in modules for debugging purposes"""
+    try:
+        import gc
+        import sys
+        
+        # Get object count as a proxy for memory usage
+        obj_count = len(gc.get_objects())
+        # Get reference count for tracking potential memory leaks
+        ref_count = sys.gettotalrefcount() if hasattr(sys, 'gettotalrefcount') else 'N/A'
+        
+        if request_id:
+            message = f"� RESOURCE_TRACE [{request_id}]: {stage} - Objects: {obj_count}, Refs: {ref_count}"
+        else:
+            message = f"� RESOURCE_TRACE: {stage} - Objects: {obj_count}, Refs: {ref_count}"
+        
+        log_info(message)
+    except Exception as e:
+        if request_id:
+            message = f"📊 RESOURCE_TRACE [{request_id}]: {stage} - Could not get resource usage: {e}"
+        else:
+            message = f"📊 RESOURCE_TRACE: {stage} - Could not get resource usage: {e}"
+        
+        log_debug(message)
