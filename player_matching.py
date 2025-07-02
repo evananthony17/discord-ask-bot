@@ -626,50 +626,71 @@ def capture_all_raw_player_detections(text):
 
 def direct_player_lookup(query_text):
     """
-    Enhanced direct player lookup that finds all matching players without recursion.
+    Balanced player lookup that prevents false positives while preserving good matches.
+    Fixes "Harper" → "Ha-Seong Kim" issue while keeping legitimate matches.
     """
     logger.info(f"🎯 DIRECT_LOOKUP: Searching for '{query_text}'")
     
     matches = []
-    normalized_query = normalize_name(query_text).lower()
+    normalized_query = normalize_name(query_text).lower().strip()
     
-    # Search through all players
+    # Skip very short queries to prevent false positives
+    if len(normalized_query) < 3:
+        logger.info(f"🎯 DIRECT_LOOKUP: Query too short, skipping")
+        return []
+    
     for player in players_data:
         player_name = player.get('name', '')
         player_normalized = normalize_name(player_name).lower()
-        
-        # Check if query matches player name (last name, first name, or full name)
         name_parts = player_normalized.split()
-        query_parts = normalized_query.split()
         
-        # Check for matches
         match_found = False
+        match_reason = ""
         
-        # Full name match
-        if normalized_query in player_normalized or player_normalized in normalized_query:
-            match_found = True
+        # Method 1: Exact word matching (highest priority)
+        query_words = normalized_query.split()
+        for query_word in query_words:
+            if len(query_word) >= 3:  # Only meaningful words
+                for name_part in name_parts:
+                    if query_word == name_part:  # EXACT match only
+                        match_found = True
+                        match_reason = f"exact word match: '{query_word}' = '{name_part}'"
+                        break
+                if match_found:
+                    break
         
-        # Last name match (most common case)
-        elif len(name_parts) >= 2:
-            last_name = name_parts[-1]
-            if last_name in normalized_query or normalized_query in last_name:
-                match_found = True
-        
-        # First name match
-        if len(name_parts) >= 1:
-            first_name = name_parts[0]
-            if first_name in normalized_query or normalized_query in first_name:
-                match_found = True
-        
-        # Fuzzy matching as fallback
+        # Method 2: Strict substring matching (prevent false positives)
         if not match_found:
-            similarity = SequenceMatcher(None, normalized_query, player_normalized).ratio()
-            if similarity > 0.7:  # Adjust threshold as needed
-                match_found = True
+            for name_part in name_parts:
+                if len(name_part) >= 4 and len(normalized_query) >= 4:
+                    # Query must be substantial portion of name part AND
+                    # Query must be at least 75% of the name part to prevent "Ha" matching "Harper"
+                    if (normalized_query in name_part and 
+                        len(normalized_query) >= len(name_part) * 0.75):
+                        match_found = True
+                        match_reason = f"substantial substring: '{normalized_query}' in '{name_part}' ({len(normalized_query)}/{len(name_part)} = {len(normalized_query)/len(name_part):.2f})"
+                        break
+                    # Also check reverse - name part in query (for longer queries)
+                    elif (name_part in normalized_query and 
+                          len(name_part) >= 4):
+                        match_found = True
+                        match_reason = f"name in query: '{name_part}' in '{normalized_query}'"
+                        break
+        
+        # Method 3: Very strict fuzzy matching (only for very close matches)
+        if not match_found:
+            # Only check against individual name parts, not full name
+            for name_part in name_parts:
+                if len(name_part) >= 4:  # Only check meaningful name parts
+                    similarity = SequenceMatcher(None, normalized_query, name_part).ratio()
+                    if similarity >= 0.90:  # Very strict threshold (was 0.7)
+                        match_found = True
+                        match_reason = f"high similarity: '{normalized_query}' vs '{name_part}' = {similarity:.3f}"
+                        break
         
         if match_found:
             matches.append(player)
-            logger.info(f"🎯 DIRECT_LOOKUP: Match found - {player_name}")
+            logger.info(f"🎯 DIRECT_LOOKUP: Match found - {player_name} ({match_reason})")
     
     logger.info(f"🎯 DIRECT_LOOKUP: Found {len(matches)} total matches for '{query_text}'")
     return matches
