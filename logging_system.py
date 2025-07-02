@@ -194,30 +194,59 @@ async def log_analytics(event_type, **kwargs):
 
 # -------- SIMPLIFIED LOGGING FUNCTIONS --------
 
+import logging
+import sys
+
+# Configure Python logging for Render
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)s] %(name)s: %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout)  # Render captures stdout
+    ]
+)
+
+# Get logger for this module
+render_logger = logging.getLogger('discord_bot')
+
+def _safe_discord_log(level, title, message, details=None):
+    """Safely attempt to log to Discord without warnings"""
+    try:
+        # Check if we have a running event loop
+        loop = asyncio.get_running_loop()
+        if loop and not loop.is_closed():
+            asyncio.create_task(log_to_discord_batched(level, title, message, details))
+    except RuntimeError:
+        # No event loop running - this is fine for testing
+        pass
+    except Exception:
+        # Any other error - silently ignore to avoid spam
+        pass
+
 def log_debug(message, details=None):
     """Log debug message"""
-    print(f"DEBUG: {message}")
-    asyncio.create_task(log_to_discord_batched("DEBUG", "Debug", message, details))
+    render_logger.debug(message)
+    _safe_discord_log("DEBUG", "Debug", message, details)
 
 def log_info(message, details=None):
     """Log info message"""
-    print(f"INFO: {message}")
-    asyncio.create_task(log_to_discord_batched("INFO", "Info", message, details))
+    render_logger.info(message)
+    _safe_discord_log("INFO", "Info", message, details)
 
 def log_warning(message, details=None):
     """Log warning message"""
-    print(f"WARNING: {message}")
-    asyncio.create_task(log_to_discord_batched("WARNING", "Warning", message, details))
+    render_logger.warning(message)
+    _safe_discord_log("WARNING", "Warning", message, details)
 
 def log_error(message, details=None):
     """Log error message"""
-    print(f"ERROR: {message}")
-    asyncio.create_task(log_to_discord_batched("ERROR", "Error", message, details))
+    render_logger.error(message)
+    _safe_discord_log("ERROR", "Error", message, details)
 
 def log_success(message, details=None):
     """Log success message"""
-    print(f"SUCCESS: {message}")
-    asyncio.create_task(log_to_discord_batched("SUCCESS", "Success", message, details))
+    render_logger.info(f"SUCCESS: {message}")
+    _safe_discord_log("SUCCESS", "Success", message, details)
 
 def log_memory_usage(stage, request_id=None):
     """Log memory usage checkpoint for debugging purposes"""
