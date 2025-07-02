@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 # -------- CIRCUIT BREAKER FOR INFINITE LOOP PREVENTION --------
 
-def prevent_infinite_loops(max_calls_per_second=3):
+def prevent_infinite_loops(max_calls_per_second=10):
     """
     Decorator to prevent infinite loops by tracking function call frequency
     """
@@ -626,39 +626,167 @@ def capture_all_raw_player_detections(text):
 
 def direct_player_lookup(query_text):
     """
-    Direct player lookup without triggering unified detection recursion.
-    Performs fuzzy matching against player database without multi-player integration.
+    Enhanced direct player lookup that finds all matching players without recursion.
     """
-    logger.debug(f"🔍 DIRECT_LOOKUP: Searching for '{query_text}'")
-    log_info(f"🔍 DIRECT_LOOKUP: Searching for '{query_text}'")
+    logger.info(f"🎯 DIRECT_LOOKUP: Searching for '{query_text}'")
     
     matches = []
-    normalized_query = normalize_name(query_text)
+    normalized_query = normalize_name(query_text).lower()
     
-    # Direct fuzzy match against player database without recursion
+    # Search through all players
     for player in players_data:
-        player_name_normalized = normalize_name(player.get('name', ''))
+        player_name = player.get('name', '')
+        player_normalized = normalize_name(player_name).lower()
         
-        # Simple similarity check
-        similarity = SequenceMatcher(None, normalized_query, player_name_normalized).ratio()
+        # Check if query matches player name (last name, first name, or full name)
+        name_parts = player_normalized.split()
+        query_parts = normalized_query.split()
         
-        # Check name parts individually
-        player_name_parts = player_name_normalized.split()
-        for name_part in player_name_parts:
-            part_similarity = SequenceMatcher(None, normalized_query, name_part).ratio()
-            similarity = max(similarity, part_similarity)
+        # Check for matches
+        match_found = False
         
-        # Use a reasonable threshold
-        if similarity >= 0.7:
+        # Full name match
+        if normalized_query in player_normalized or player_normalized in normalized_query:
+            match_found = True
+        
+        # Last name match (most common case)
+        elif len(name_parts) >= 2:
+            last_name = name_parts[-1]
+            if last_name in normalized_query or normalized_query in last_name:
+                match_found = True
+        
+        # First name match
+        if len(name_parts) >= 1:
+            first_name = name_parts[0]
+            if first_name in normalized_query or normalized_query in first_name:
+                match_found = True
+        
+        # Fuzzy matching as fallback
+        if not match_found:
+            similarity = SequenceMatcher(None, normalized_query, player_normalized).ratio()
+            if similarity > 0.7:  # Adjust threshold as needed
+                match_found = True
+        
+        if match_found:
             matches.append(player)
-            log_info(f"🔍 DIRECT_LOOKUP: Found match '{normalized_query}' → {player['name']} ({player['team']}) = {similarity:.3f}")
+            logger.info(f"🎯 DIRECT_LOOKUP: Match found - {player_name}")
     
-    # Sort by name for consistency
-    matches.sort(key=lambda x: x['name'])
-    
-    logger.debug(f"🔍 DIRECT_LOOKUP: Found {len(matches)} matches for '{query_text}'")
-    log_info(f"🔍 DIRECT_LOOKUP: Found {len(matches)} matches for '{query_text}'")
+    logger.info(f"🎯 DIRECT_LOOKUP: Found {len(matches)} total matches for '{query_text}'")
     return matches
+
+# -------- MULTI-PLAYER PROCESSING FUNCTIONS --------
+
+def split_query_on_conjunctions(query):
+    """
+    Split query on conjunctions like 'and', 'or', etc.
+    """
+    conjunctions = [' and ', ' & ', ' or ', ' vs ', ' versus ', ' with ', ', ']
+    
+    segments = [query]
+    for conjunction in conjunctions:
+        new_segments = []
+        for segment in segments:
+            new_segments.extend(segment.split(conjunction))
+        segments = new_segments
+    
+    # Clean segments
+    cleaned_segments = []
+    for segment in segments:
+        cleaned = segment.strip()
+        if cleaned:
+            cleaned_segments.append(cleaned)
+    
+    return cleaned_segments
+
+def process_split_segments(segments):
+    """
+    Process each segment and combine all found players
+    """
+    all_players_found = []
+    
+    for segment in segments:
+        logger.info(f"🔍 SEGMENT_PROCESSING: Processing segment '{segment}'")
+        
+        # Clean the segment (remove punctuation)
+        cleaned_segment = segment.strip().rstrip('?!.,')
+        
+        # Use direct player lookup to avoid circuit breaker
+        try:
+            segment_players = direct_player_lookup(cleaned_segment)
+            logger.info(f"🔍 SEGMENT_PROCESSING: Found {len(segment_players)} players in '{cleaned_segment}'")
+            
+            if segment_players:
+                for player in segment_players:
+                    logger.info(f"🔍 SEGMENT_PROCESSING: Player found - {player.get('name', 'Unknown')}")
+                all_players_found.extend(segment_players)
+            else:
+                logger.info(f"🔍 SEGMENT_PROCESSING: No players found in '{cleaned_segment}'")
+                
+        except Exception as e:
+            logger.error(f"🔍 SEGMENT_PROCESSING: Error processing '{cleaned_segment}': {e}")
+    
+    # Remove duplicates
+    unique_players = []
+    seen_names = set()
+    for player in all_players_found:
+        player_name = player.get('name', '')
+        if player_name not in seen_names:
+            unique_players.append(player)
+            seen_names.add(player_name)
+    
+    logger.info(f"🔍 SEGMENT_PROCESSING: Total unique players found: {len(unique_players)}")
+    return unique_players
+
+def enhanced_validation_with_multi_player_check(query, found_players):
+    """
+    Enhanced validation that properly blocks multi-player queries
+    """
+    logger.info(f"🛡️ ENHANCED_VALIDATION: Checking {len(found_players)} players for '{query}'")
+    
+    # If we found multiple players, check if they should be blocked
+    if len(found_players) > 1:
+        # Check if they have different last names
+        last_names = set()
+        for player in found_players:
+            player_name = player.get('name', '')
+            name_parts = normalize_name(player_name).lower().split()
+            if name_parts:
+                last_names.add(name_parts[-1])  # Add last name
+        
+        logger.info(f"🛡️ ENHANCED_VALIDATION: Found {len(last_names)} unique last names: {list(last_names)}")
+        
+        if len(last_names) > 1:
+            # Multiple different last names = multi-player query = BLOCK
+            logger.info(f"🚫 MULTI_PLAYER_BLOCK: Multiple distinct last names detected")
+            return False  # Block the query
+    
+    # Single player or same last name - allow normal processing
+    return True
+
+def process_multi_player_query_fixed(original_query):
+    """
+    Fixed multi-player query processing
+    """
+    logger.info(f"🔄 MULTI_PLAYER_PROCESSING: Starting processing for '{original_query}'")
+    
+    # Step 1: Split the query if it contains conjunctions
+    segments = split_query_on_conjunctions(original_query)
+    logger.info(f"🔄 MULTI_PLAYER_PROCESSING: Split into {len(segments)} segments: {segments}")
+    
+    # Step 2: Process each segment to find players
+    all_found_players = process_split_segments(segments)
+    logger.info(f"🔄 MULTI_PLAYER_PROCESSING: Found {len(all_found_players)} total players")
+    
+    # Step 3: Enhanced validation with multi-player blocking
+    should_allow = enhanced_validation_with_multi_player_check(original_query, all_found_players)
+    
+    if not should_allow:
+        logger.info(f"🚫 MULTI_PLAYER_PROCESSING: Query blocked due to multi-player detection")
+        return False, all_found_players
+    
+    # Step 4: Continue with normal processing if allowed
+    logger.info(f"✅ MULTI_PLAYER_PROCESSING: Query approved for normal processing")
+    return True, all_found_players
 
 # -------- MAIN PLAYER CHECKING FUNCTION --------
 

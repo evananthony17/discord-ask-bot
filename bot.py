@@ -52,7 +52,7 @@ from config import (
 from logging_system import log_info, log_error, log_success, log_analytics, start_batching, log_memory_usage
 from utils import load_words_from_json, load_players_from_json, load_nicknames_from_json, is_likely_player_request, normalize_name
 from validation import validate_question
-from player_matching import check_player_mentioned
+from player_matching import check_player_mentioned, process_multi_player_query_fixed
 from recent_mentions import check_recent_player_mentions, check_fallback_recent_mentions
 from selection_handlers import start_selection_timeout, cancel_selection_timeout, handle_disambiguation_selection, handle_block_selection, cleanup_invalid_selection
 from bot_logic import process_approved_question, get_potential_player_words, handle_multi_player_question, handle_single_player_question, schedule_answered_message_cleanup
@@ -275,6 +275,33 @@ async def ask_question(ctx, *, question: str = None):
             except:
                 pass
             return
+        
+        # 🔧 NEW: Early multi-player detection to prevent fallback bypass
+        logger.info(f"🟡 FLOW_TRACE [{request_id}]: Starting early multi-player detection")
+        log_resource_usage("Before Multi-Player Check", request_id)
+        
+        try:
+            should_allow, detected_players = process_multi_player_query_fixed(question)
+            if not should_allow:
+                # Multi-player query detected and blocked
+                logger.info(f"🚫 FLOW_TRACE [{request_id}]: Multi-player query blocked early")
+                
+                try:
+                    await ctx.message.delete()
+                except:
+                    pass
+                
+                player_names = [p.get('name', 'Unknown') for p in detected_players]
+                error_msg = await ctx.send(
+                    f"🚫 **Single Player Policy**: Your question appears to reference multiple players "
+                    f"({', '.join(player_names)}). Please ask about one player at a time."
+                )
+                await error_msg.delete(delay=8)
+                return
+            else:
+                logger.info(f"✅ FLOW_TRACE [{request_id}]: Multi-player check passed, continuing with normal detection")
+        except Exception as e:
+            logger.warning(f"⚠️ FLOW_TRACE [{request_id}]: Multi-player check failed, falling back to normal detection: {e}")
         
         logger.info(f"🟡 FLOW_TRACE [{request_id}]: Starting player detection")
         log_resource_usage("Before Player Detection", request_id)
