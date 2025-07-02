@@ -1,8 +1,10 @@
 import re
 import asyncio
 import logging
+import time
 from datetime import datetime
 from difflib import SequenceMatcher
+from functools import wraps
 from config import players_data
 from utils import normalize_name, expand_nicknames, is_likely_player_request
 from logging_system import log_analytics, log_info
@@ -10,6 +12,35 @@ from player_matching_validator import validate_player_matches
 
 # Set up detection tracing logger
 logger = logging.getLogger(__name__)
+
+# -------- CIRCUIT BREAKER FOR INFINITE LOOP PREVENTION --------
+
+def prevent_infinite_loops(max_calls_per_second=3):
+    """
+    Decorator to prevent infinite loops by tracking function call frequency
+    """
+    def decorator(func):
+        if not hasattr(func, '_call_times'):
+            func._call_times = []
+        
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            now = time.time()
+            
+            # Clean old call times (older than 1 second)
+            func._call_times = [t for t in func._call_times if now - t < 1.0]
+            
+            # Check if function is being called too frequently
+            if len(func._call_times) >= max_calls_per_second:
+                logger.error(f"🚨 CIRCUIT_BREAKER: {func.__name__} called {len(func._call_times)} times in 1 second - possible infinite loop detected")
+                log_info(f"🚨 CIRCUIT_BREAKER: {func.__name__} called {len(func._call_times)} times in 1 second - possible infinite loop detected")
+                raise RuntimeError(f"Circuit breaker triggered for {func.__name__} - preventing infinite loop")
+            
+            func._call_times.append(now)
+            return func(*args, **kwargs)
+        
+        return wrapper
+    return decorator
 
 # -------- SEGMENT CLEANING --------
 
@@ -591,13 +622,58 @@ def capture_all_raw_player_detections(text):
     log_info(f"RAW DETECTION: Total detected names: {len(all_detected_names)} - {all_detected_names}")
     return all_detected_names
 
+# -------- DIRECT PLAYER LOOKUP (RECURSION-SAFE) --------
+
+def direct_player_lookup(query_text):
+    """
+    Direct player lookup without triggering unified detection recursion.
+    Performs fuzzy matching against player database without multi-player integration.
+    """
+    logger.debug(f"🔍 DIRECT_LOOKUP: Searching for '{query_text}'")
+    log_info(f"🔍 DIRECT_LOOKUP: Searching for '{query_text}'")
+    
+    matches = []
+    normalized_query = normalize_name(query_text)
+    
+    # Direct fuzzy match against player database without recursion
+    for player in players_data:
+        player_name_normalized = normalize_name(player.get('name', ''))
+        
+        # Simple similarity check
+        similarity = SequenceMatcher(None, normalized_query, player_name_normalized).ratio()
+        
+        # Check name parts individually
+        player_name_parts = player_name_normalized.split()
+        for name_part in player_name_parts:
+            part_similarity = SequenceMatcher(None, normalized_query, name_part).ratio()
+            similarity = max(similarity, part_similarity)
+        
+        # Use a reasonable threshold
+        if similarity >= 0.7:
+            matches.append(player)
+            log_info(f"🔍 DIRECT_LOOKUP: Found match '{normalized_query}' → {player['name']} ({player['team']}) = {similarity:.3f}")
+    
+    # Sort by name for consistency
+    matches.sort(key=lambda x: x['name'])
+    
+    logger.debug(f"🔍 DIRECT_LOOKUP: Found {len(matches)} matches for '{query_text}'")
+    log_info(f"🔍 DIRECT_LOOKUP: Found {len(matches)} matches for '{query_text}'")
+    return matches
+
 # -------- MAIN PLAYER CHECKING FUNCTION --------
 
-def detect_players_unified(text):
+@prevent_infinite_loops(max_calls_per_second=3)
+def detect_players_unified(text, is_recursive_call=False):
     """
-    Universal player detection with memory leak protection.
+    Universal player detection with memory leak protection and recursion prevention.
     Single entry point for ALL player detection to ensure consistent behavior.
     """
+    # 🛡️ RECURSION PREVENTION: Block recursive calls
+    if is_recursive_call:
+        logger.debug("🛡️ RECURSION_PREVENTION: Skipping recursive unified detection call")
+        log_info("🛡️ RECURSION_PREVENTION: Skipping recursive unified detection call")
+        return direct_player_lookup(text)
+    
     # 🚨 UNIVERSAL PROTECTION: Block long sentences FIRST
     word_count = len(text.split())
     if word_count > 4:
@@ -620,16 +696,16 @@ def detect_players_unified(text):
         print(f"🚨 Error in exact matching: {e}")
         log_info(f"Error in exact matching: {e}")
     
-    # Step 2: Try the existing player detection logic
+    # Step 2: Try the existing player detection logic with recursion flag
     try:
         # Use the current check_player_mentioned logic but with our protection
-        return check_player_mentioned_original(text)
+        return check_player_mentioned_original(text, is_recursive_call=True)
     except Exception as e:
         print(f"🚨 Error in existing detection: {e}")
         log_info(f"Error in existing detection: {e}")
         return []
 
-def check_player_mentioned_original(text):
+def check_player_mentioned_original(text, is_recursive_call=False):
     """🔧 ORIGINAL: Check if any player is mentioned with MULTI-PLAYER detection integration"""
     start_time = datetime.now()
     
