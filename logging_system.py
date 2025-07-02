@@ -219,16 +219,6 @@ def log_success(message, details=None):
     print(f"SUCCESS: {message}")
     asyncio.create_task(log_to_discord_batched("SUCCESS", "Success", message, details))
 
-def log_memory_usage(stage, request_id=None):
-    """Log memory usage checkpoint for debugging purposes (fallback only)"""
-    # Simple fallback logging without external dependencies
-    if request_id:
-        message = f"💾 MEMORY_TRACE [{request_id}]: {stage} - Basic checkpoint"
-    else:
-        message = f"💾 MEMORY_TRACE: {stage} - Basic checkpoint"
-    
-    log_debug(message)
-
 def log_resource_usage(stage, request_id=None):
     """Log resource usage checkpoint using built-in modules for debugging purposes"""
     try:
