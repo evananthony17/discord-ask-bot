@@ -611,20 +611,20 @@ def capture_all_raw_player_detections(text):
                         all_detected_names.append(detected_name)
                         log_info(f"RAW DETECTION: Found lastname match '{lastname}' → {detected_name}")
     
-    # 🔧 FIX: Route through unified detection instead of direct fuzzy matching
-    unified_matches = detect_players_unified(text)
-    if unified_matches and isinstance(unified_matches, list):
-        for player in unified_matches:
+    # 🔧 FIX: Route through simplified detection instead of old complex system
+    simplified_matches = simplified_player_detection(text)
+    if simplified_matches and isinstance(simplified_matches, list):
+        for player in simplified_matches:
             detected_name = player['name']
             if detected_name not in all_detected_names:
                 all_detected_names.append(detected_name)
-                log_info(f"RAW DETECTION: Found unified match → {detected_name}")
-    elif unified_matches:
+                log_info(f"RAW DETECTION: Found simplified match → {detected_name}")
+    elif simplified_matches:
         # Single player returned
-        detected_name = unified_matches['name']
+        detected_name = simplified_matches['name']
         if detected_name not in all_detected_names:
             all_detected_names.append(detected_name)
-            log_info(f"RAW DETECTION: Found unified match → {detected_name}")
+            log_info(f"RAW DETECTION: Found simplified match → {detected_name}")
     
     log_info(f"RAW DETECTION: Total detected names: {len(all_detected_names)} - {all_detected_names}")
     return all_detected_names
