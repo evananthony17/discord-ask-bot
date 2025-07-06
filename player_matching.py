@@ -443,6 +443,11 @@ def fuzzy_match_players(text, max_results=8):
                 # 🔧 FIX: Lower threshold for substring matches (like "greene" matching "Riley Greene")
                 threshold = 0.6  # Allow Riley Greene (0.667) and Isaiah Greene (0.643) to pass
                 log_info(f"SUBSTRING THRESHOLD: Lowered to {threshold} for '{potential_name}' in '{player_last_name}'")
+            elif ' ' in potential_name:
+                # 🔧 NEW: Much stricter threshold for multi-word queries like "juan soto"
+                # This prevents "juan soto" from matching "juan brito" (0.737)
+                threshold = 0.95  # Only very close matches for full names
+                log_info(f"MULTI-WORD THRESHOLD: Raised to {threshold} for full name '{potential_name}'")
             elif ' ' in player_name and ' ' not in potential_name:
                 # Calculate last_name_similarity for threshold logic
                 last_name_similarity = SequenceMatcher(None, potential_name, player_last_name).ratio()
@@ -937,13 +942,18 @@ def check_player_mentioned_original(text, is_recursive_call=False):
         validated_players = validate_player_matches(text, unique_detected_players)
         log_info(f"MULTI-PLAYER VALIDATION: {len(unique_detected_players)} → {len(validated_players)}")
         
-        duration_ms = int((datetime.now() - start_time).total_seconds() * 1000)
-        asyncio.create_task(log_analytics("Player Search",
-            question=text, duration_ms=duration_ms, players_checked=len(players_data),
-            matches_found=len(validated_players), players_found=validated_players, search_type="multi_player_integrated"
-        ))
-        
-        return validated_players
+        # 🔧 CRITICAL FIX: Return immediately if we found ANY validated players
+        # This prevents the fallback logic from overriding correct results
+        if validated_players:
+            log_info(f"EARLY RETURN: Multi-player detection found {len(validated_players)} validated players, stopping all fallback processing")
+            duration_ms = int((datetime.now() - start_time).total_seconds() * 1000)
+            asyncio.create_task(log_analytics("Player Search",
+                question=text, duration_ms=duration_ms, players_checked=len(players_data),
+                matches_found=len(validated_players), players_found=validated_players, search_type="multi_player_integrated"
+            ))
+            return validated_players
+        else:
+            log_info(f"MULTI-PLAYER VALIDATION FAILED: All {len(unique_detected_players)} players were rejected by validation, continuing to fallback")
     
     # 🔧 FALLBACK: If multi-player detection didn't find anything, use original logic
     text_normalized = normalize_name(text)
