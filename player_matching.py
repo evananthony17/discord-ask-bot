@@ -1273,12 +1273,11 @@ def check_player_mentioned_original(text, is_recursive_call=False):
 
 def check_player_mentioned(text):
     """
-    Main entry point for player detection - now uses unified protection.
+    Main entry point for player detection - simplified unified approach.
     """
-    # 🔍 DETECTION_TRACE: Entry point logging
     logger.info(f"🔍 DETECTION_TRACE: Starting player detection for query: '{text[:50]}...'")
     
-    result = detect_players_unified(text)
+    result = simplified_player_detection(text)
     
     # 🔍 DETECTION_TRACE: Exit point logging
     if result:
@@ -1290,3 +1289,79 @@ def check_player_mentioned(text):
         logger.info(f"🔍 DETECTION_TRACE: Detection complete, returning no matches")
     
     return result
+
+def simplified_player_detection(text):
+    """
+    Simplified, unified player detection that eliminates competing pathways.
+    Single detection flow with clear priority hierarchy.
+    """
+    start_time = datetime.now()
+    
+    logger.info(f"🎯 SIMPLIFIED_DETECTION: Starting detection for '{text}'")
+    
+    if not players_data or not is_likely_player_request(text):
+        return None
+    
+    # Expand nicknames first
+    expanded_text = expand_nicknames(text)
+    if expanded_text != text:
+        logger.info(f"🎯 SIMPLIFIED_DETECTION: Expanded '{text}' to '{expanded_text}'")
+        text = expanded_text
+    
+    # PRIORITY 1: Exact matches (highest priority)
+    exact_matches = find_exact_player_matches(text)
+    if exact_matches:
+        logger.info(f"🎯 SIMPLIFIED_DETECTION: Found {len(exact_matches)} exact matches, returning immediately")
+        duration_ms = int((datetime.now() - start_time).total_seconds() * 1000)
+        asyncio.create_task(log_analytics("Player Search",
+            question=text, duration_ms=duration_ms, players_checked=len(players_data),
+            matches_found=len(exact_matches), players_found=exact_matches, search_type="exact_match"
+        ))
+        return exact_matches
+    
+    # PRIORITY 2: Filtered name extraction and matching
+    potential_names = extract_potential_names(text)
+    logger.info(f"🎯 SIMPLIFIED_DETECTION: Extracted {len(potential_names)} potential names: {potential_names}")
+    
+    all_matches = []
+    for potential_name in potential_names:
+        logger.info(f"🎯 SIMPLIFIED_DETECTION: Processing potential name: '{potential_name}'")
+        
+        # Use fuzzy matching for each potential name
+        name_matches = fuzzy_match_players(potential_name, max_results=5)
+        if name_matches:
+            logger.info(f"🎯 SIMPLIFIED_DETECTION: Found {len(name_matches)} matches for '{potential_name}': {[p['name'] for p in name_matches]}")
+            all_matches.extend(name_matches)
+    
+    # Remove duplicates
+    if all_matches:
+        seen_players = set()
+        unique_matches = []
+        for player in all_matches:
+            player_key = f"{normalize_name(player['name'])}|{normalize_name(player['team'])}"
+            if player_key not in seen_players:
+                unique_matches.append(player)
+                seen_players.add(player_key)
+        
+        logger.info(f"🎯 SIMPLIFIED_DETECTION: Found {len(unique_matches)} unique matches before validation")
+        
+        # PRIORITY 3: Validation
+        validated_matches = validate_player_matches(text, unique_matches)
+        logger.info(f"🎯 SIMPLIFIED_DETECTION: Validation: {len(unique_matches)} → {len(validated_matches)}")
+        
+        if validated_matches:
+            duration_ms = int((datetime.now() - start_time).total_seconds() * 1000)
+            asyncio.create_task(log_analytics("Player Search",
+                question=text, duration_ms=duration_ms, players_checked=len(players_data),
+                matches_found=len(validated_matches), players_found=validated_matches, search_type="filtered_detection"
+            ))
+            return validated_matches
+    
+    # No matches found
+    logger.info(f"🎯 SIMPLIFIED_DETECTION: No matches found for '{text}'")
+    duration_ms = int((datetime.now() - start_time).total_seconds() * 1000)
+    asyncio.create_task(log_analytics("Player Search",
+        question=text, duration_ms=duration_ms, players_checked=len(players_data),
+        matches_found=0, search_type="no_match"
+    ))
+    return None
