@@ -203,7 +203,9 @@ def extract_potential_names(text):
         'very', 'quite', 'pretty', 'rather', 'somewhat', 'fairly', 'totally',
         'completely', 'entirely', 'fully', 'mostly', 'largely', 'mainly',
         'basically', 'essentially', 'generally', 'usually', 'normally',
-        'typically', 'often', 'sometimes', 'rarely', 'never', 'always'
+        'typically', 'often', 'sometimes', 'rarely', 'never', 'always',
+        # CRITICAL: Add more context words that should be filtered
+        'looking', 'numbers', 'projections', 'projection', 'statistics'
     }
     
     # ENHANCED: Increase minimum length requirement for individual words
@@ -1273,10 +1275,11 @@ def check_player_mentioned_original(text, is_recursive_call=False):
 
 def check_player_mentioned(text):
     """
-    Main entry point for player detection - simplified unified approach.
+    Main entry point for player detection - now uses simplified unified approach.
     """
     logger.info(f"🔍 DETECTION_TRACE: Starting player detection for query: '{text[:50]}...'")
     
+    # Use the new simplified detection instead of the old complex system
     result = simplified_player_detection(text)
     
     # 🔍 DETECTION_TRACE: Exit point logging
