@@ -721,30 +721,42 @@ def split_query_on_conjunctions(query):
 
 def process_split_segments(segments):
     """
-    Process each segment and combine all found players
+    Process segments using existing filtering logic from single-player detection
     """
     all_players_found = []
     
     for segment in segments:
         logger.info(f"🔍 SEGMENT_PROCESSING: Processing segment '{segment}'")
         
-        # Clean the segment (remove punctuation)
-        cleaned_segment = segment.strip().rstrip('?!.,')
+        # Use existing clean_segment_for_player_matching function
+        cleaned_segment = clean_segment_for_player_matching(segment)
+        logger.info(f"🧹 CLEANED_SEGMENT: '{segment}' → '{cleaned_segment}'")
         
-        # Use direct player lookup to avoid circuit breaker
-        try:
-            segment_players = direct_player_lookup(cleaned_segment)
-            logger.info(f"🔍 SEGMENT_PROCESSING: Found {len(segment_players)} players in '{cleaned_segment}'")
-            
-            if segment_players:
-                for player in segment_players:
-                    logger.info(f"🔍 SEGMENT_PROCESSING: Player found - {player.get('name', 'Unknown')}")
-                all_players_found.extend(segment_players)
-            else:
-                logger.info(f"🔍 SEGMENT_PROCESSING: No players found in '{cleaned_segment}'")
+        if len(cleaned_segment.strip()) >= 3:
+            try:
+                # Use existing extract_potential_names (has stop word filtering)
+                potential_names = extract_potential_names(cleaned_segment)
+                logger.info(f"🔍 EXTRACTED_NAMES: Found {len(potential_names)} potential names: {potential_names}")
                 
-        except Exception as e:
-            logger.error(f"🔍 SEGMENT_PROCESSING: Error processing '{cleaned_segment}': {e}")
+                # Process each potential name using existing single-player detection
+                for name in potential_names:
+                    logger.info(f"🔍 PROCESSING_NAME: '{name}'")
+                    
+                    # Use existing fuzzy_match_players (has proper filtering and validation)
+                    segment_players = fuzzy_match_players(name, max_results=5)
+                    
+                    if segment_players:
+                        logger.info(f"🔍 SEGMENT_PROCESSING: Found {len(segment_players)} players for '{name}'")
+                        for player in segment_players:
+                            logger.info(f"🔍 SEGMENT_PROCESSING: Player found - {player.get('name', 'Unknown')}")
+                        all_players_found.extend(segment_players)
+                    else:
+                        logger.info(f"🔍 SEGMENT_PROCESSING: No players found for '{name}'")
+                        
+            except Exception as e:
+                logger.error(f"🔍 SEGMENT_PROCESSING: Error processing '{cleaned_segment}': {e}")
+        else:
+            logger.info(f"🔍 SEGMENT_PROCESSING: Skipping short/empty cleaned segment: '{cleaned_segment}'")
     
     # Remove duplicates
     unique_players = []
