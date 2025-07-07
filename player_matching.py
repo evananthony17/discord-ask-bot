@@ -1427,11 +1427,113 @@ def simplified_fuzzy_match(text, max_results=8):
 
 def has_multi_player_keywords(query):
     """
-    Check if query contains keywords that indicate multi-player intent
+    Context-aware check if query contains keywords that indicate multi-player intent.
+    Only triggers when separators are actually used to separate player names.
     """
-    multi_keywords = ['and', '&', 'vs', 'versus', ',', 'or', 'with']
     query_lower = query.lower()
-    return any(keyword in query_lower for keyword in multi_keywords)
+    
+    # Simple word-based keywords (always count)
+    word_keywords = ['and', '&', 'vs', 'versus', 'or', 'with']
+    if any(f' {keyword} ' in f' {query_lower} ' for keyword in word_keywords):
+        return True
+    
+    # Context-aware separator detection
+    # Only count separators if they appear to be separating player-like terms
+    
+    # Check for comma separation (like "Soto, Harper, Trout")
+    if ',' in query:
+        # Split by commas and check if we get multiple meaningful segments
+        comma_segments = [seg.strip() for seg in query.split(',')]
+        if len(comma_segments) >= 2:
+            # Check if segments look like player names (not commentary)
+            player_like_segments = 0
+            for segment in comma_segments:
+                # Remove common commentary words
+                segment_clean = segment.lower()
+                commentary_words = ['i', 'me', 'my', 'we', 'us', 'our', 'you', 'your', 'he', 'she', 'it', 'they', 'them', 'their',
+                                  'have', 'has', 'had', 'haven', 'hasn', 'hadn', 'been', 'being', 'am', 'is', 'are', 'was', 'were',
+                                  'do', 'does', 'did', 'don', 'doesn', 'didn', 'will', 'would', 'could', 'should', 'can', 'may',
+                                  'paying', 'attention', 'recently', 'lately', 'watching', 'following', 'tracking', 'monitoring']
+                
+                # If segment has mostly commentary words, it's not a player name
+                segment_words = segment_clean.split()
+                if segment_words and not any(word in commentary_words for word in segment_words):
+                    # Check if it looks like a name (has alphabetic characters, reasonable length)
+                    if any(word.isalpha() and len(word) >= 3 for word in segment_words):
+                        player_like_segments += 1
+            
+            # Only count as multi-player if we have multiple player-like segments
+            if player_like_segments >= 2:
+                return True
+    
+    # Check for semicolon separation (like "Soto;Harper;Trout")
+    if ';' in query:
+        # Semicolons are almost always used for player separation, not commentary
+        semicolon_segments = [seg.strip() for seg in query.split(';')]
+        if len(semicolon_segments) >= 2:
+            # Check if segments look like names
+            name_like_segments = sum(1 for seg in semicolon_segments 
+                                   if seg and any(word.isalpha() and len(word) >= 3 for word in seg.split()))
+            if name_like_segments >= 2:
+                return True
+    
+    # Check for slash separation (like "Soto/Harper/Trout")
+    if '/' in query:
+        # Slashes used for player separation
+        slash_segments = [seg.strip() for seg in query.split('/')]
+        if len(slash_segments) >= 2:
+            # Check if segments look like names
+            name_like_segments = sum(1 for seg in slash_segments 
+                                   if seg and any(word.isalpha() and len(word) >= 3 for word in seg.split()))
+            if name_like_segments >= 2:
+                return True
+    
+    # Check for parentheses - only count if they seem to be separating players, not commentary
+    if '(' in query and ')' in query:
+        # Look for patterns like "Soto (Yankees) Harper (Phillies)" or "Soto (team) vs Harper (team)"
+        # But NOT "How is Soto doing (I haven't been paying attention)"
+        
+        # Check if parentheses contain team-like words or are followed by player-like words
+        import re
+        paren_pattern = r'\([^)]+\)'
+        paren_matches = re.findall(paren_pattern, query_lower)
+        
+        if paren_matches:
+            # Check if parentheses contain team names or are part of player separation
+            team_indicators = ['yankees', 'mets', 'dodgers', 'phillies', 'angels', 'astros', 'braves', 'cubs',
+                             'giants', 'padres', 'rangers', 'rays', 'reds', 'rockies', 'royals', 'tigers',
+                             'twins', 'orioles', 'mariners', 'marlins', 'nationals', 'pirates', 'guardians',
+                             'athletics', 'brewers', 'cardinals', 'diamondbacks', 'white sox', 'red sox', 'blue jays']
+            
+            commentary_indicators = ['i', 'me', 'my', 'we', 'us', 'our', 'you', 'your', 'he', 'she', 'it', 'they',
+                                   'have', 'has', 'had', 'haven', 'hasn', 'hadn', 'been', 'being', 'am', 'is', 'are',
+                                   'was', 'were', 'do', 'does', 'did', 'don', 'doesn', 'didn', 'will', 'would',
+                                   'could', 'should', 'can', 'may', 'paying', 'attention', 'recently', 'lately',
+                                   'watching', 'following', 'tracking', 'monitoring', 'know', 'think', 'believe',
+                                   'hope', 'want', 'need', 'like', 'love', 'hate', 'see', 'hear', 'understand']
+            
+            has_team_context = any(team in paren_content for paren_content in paren_matches 
+                                 for team in team_indicators)
+            has_commentary = any(indicator in paren_content for paren_content in paren_matches 
+                               for indicator in commentary_indicators)
+            
+            # Only count as multi-player if parentheses contain teams, not commentary
+            if has_team_context and not has_commentary:
+                return True
+    
+    # Check for brackets - similar logic to parentheses
+    if '[' in query and ']' in query:
+        # Brackets are often used for player separation like "[Judge] and [Ohtani]"
+        bracket_segments = re.split(r'[\[\]]', query)
+        name_segments = [seg.strip() for seg in bracket_segments if seg.strip()]
+        if len(name_segments) >= 2:
+            # Check if segments look like names
+            name_like_segments = sum(1 for seg in name_segments 
+                                   if any(word.isalpha() and len(word) >= 3 for word in seg.split()))
+            if name_like_segments >= 2:
+                return True
+    
+    return False
 
 def simplified_player_detection(text):
     """
