@@ -827,7 +827,7 @@ def process_multi_player_query_fixed(original_query):
     
     logger.info(f"🔄 MULTI_PLAYER_PROCESSING: Found {len(detected_players)} total players: {[p['name'] for p in detected_players] if detected_players else []}")
     
-    # Check if we should block based on multiple distinct last names
+    # Check if we should block based on multiple distinct last names AND multi-player keywords
     if len(detected_players) > 1:
         # Check if they have different last names
         last_names = set()
@@ -840,9 +840,15 @@ def process_multi_player_query_fixed(original_query):
         logger.info(f"🔄 MULTI_PLAYER_PROCESSING: Found {len(last_names)} unique last names: {list(last_names)}")
         
         if len(last_names) > 1:
-            # Multiple different last names = multi-player query = BLOCK
-            logger.info(f"🚫 MULTI_PLAYER_PROCESSING: Query blocked due to multiple distinct last names")
-            return False, detected_players
+            # 🔧 CRITICAL FIX: Only block if query has multi-player keywords
+            if has_multi_player_keywords(original_query):
+                # Multiple different last names + multi-player keywords = true multi-player query = BLOCK
+                logger.info(f"🚫 MULTI_PLAYER_PROCESSING: Query blocked - multiple last names + multi-player keywords detected")
+                return False, detected_players
+            else:
+                # Multiple different last names but no multi-player keywords = disambiguation case = ALLOW
+                logger.info(f"✅ MULTI_PLAYER_PROCESSING: Multiple last names but no multi-player keywords, allowing for disambiguation")
+                return True, detected_players
         else:
             # Same last name = disambiguation case = ALLOW
             logger.info(f"✅ MULTI_PLAYER_PROCESSING: Same last name detected, allowing for disambiguation")
@@ -1374,6 +1380,14 @@ def simplified_fuzzy_match(text, max_results=8):
     
     logger.info(f"🎯 SIMPLIFIED_FUZZY: Returning {len(unique_matches)} matches: {[p['name'] for p in unique_matches]}")
     return unique_matches
+
+def has_multi_player_keywords(query):
+    """
+    Check if query contains keywords that indicate multi-player intent
+    """
+    multi_keywords = ['and', '&', 'vs', 'versus', ',', 'or', 'with']
+    query_lower = query.lower()
+    return any(keyword in query_lower for keyword in multi_keywords)
 
 def simplified_player_detection(text):
     """
