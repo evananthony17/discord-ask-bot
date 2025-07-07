@@ -158,8 +158,8 @@ def extract_potential_names(text):
         return [normalize_name(text)]  # Return only the exact match, don't split
     
     # 🔧 CRITICAL FIX: Split by separators BEFORE normalizing to preserve commas
-    # Split by "and", "&", "vs", "versus", commas, "/", "or", etc.
-    segments = re.split(r'\s*(?:and|&|vs\.?|versus|,|/|or)\s*', text, flags=re.IGNORECASE)
+    # Split by "and", "&", "vs", "versus", commas, "/", "or", parentheses, brackets, semicolons, etc.
+    segments = re.split(r'\s*(?:and|&|vs\.?|versus|,|/|or|\(|\)|\[|\]|;)\s*', text, flags=re.IGNORECASE)
     
     potential_names = []
     
@@ -260,9 +260,19 @@ def extract_potential_names(text):
             potential_names.append(original_simple)
     
     # Add the original text as fallback (normalized) - but only if it's reasonable length
-    # 🔧 CRITICAL FIX: Filter out stats words from the original text before adding as fallback
+    # 🔧 CRITICAL FIX: Filter out stats words AND punctuation from the original text before adding as fallback
     original_words = text_normalized.split()
-    filtered_original_words = [w for w in original_words if w not in stop_words and w not in non_name_words]
+    filtered_original_words = []
+    
+    for word in original_words:
+        # Remove punctuation from word
+        clean_word = re.sub(r'[^\w]', '', word)
+        # Only keep if it's not a stop word, not a non-name word, and has reasonable length
+        if (clean_word and 
+            clean_word not in stop_words and 
+            clean_word not in non_name_words and 
+            len(clean_word) >= 3):
+            filtered_original_words.append(clean_word)
     
     if len(filtered_original_words) >= 1:
         filtered_original = ' '.join(filtered_original_words)
