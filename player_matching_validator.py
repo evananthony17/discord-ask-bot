@@ -364,9 +364,13 @@ def validate_player_mention_in_text(text, player_name, context=None):
     text_normalized = normalize_name(text).lower()
     player_normalized = normalize_name(player_name).lower()
     
-    # Check if player name (or parts) appear in the text
+    # 🔧 CRITICAL FIX: Split text on separators, not just spaces
+    # This handles cases like "Soto;Edman;trout" properly
+    import re
+    text_words = re.split(r'[;\s,&/\(\)\[\]]+', text_normalized)
+    text_words = [word for word in text_words if word]  # Remove empty strings
+    
     player_words = player_normalized.split()
-    text_words = text_normalized.split()
     
     # Count how many player name parts appear in the text
     matching_parts = sum(1 for part in player_words if part in text_words)
