@@ -283,23 +283,39 @@ async def ask_question(ctx, *, question: str = None):
         try:
             should_allow, detected_players = process_multi_player_query_fixed(question)
             if not should_allow:
-                # Multi-player query detected and blocked
-                logger.info(f"🚫 FLOW_TRACE [{request_id}]: Multi-player query blocked early")
-                
-                try:
-                    await ctx.message.delete()
-                except:
-                    pass
-                
-                player_names = [p.get('name', 'Unknown') for p in detected_players]
-                error_msg = await ctx.send(
-                    f"🚫 **Single Player Policy**: Your question appears to reference multiple players "
-                    f"({', '.join(player_names)}). Please ask about one player at a time."
-                )
-                await error_msg.delete(delay=8)
-                return
-            else:
-                logger.info(f"✅ FLOW_TRACE [{request_id}]: Multi-player check passed, continuing with normal detection")
+                # 🔧 CRITICAL FIX: Check if this could be a disambiguation case before blocking
+                if detected_players and len(detected_players) > 1:
+                    # Check if all players have the same last name (disambiguation case)
+                    last_names = set()
+                    for player in detected_players:
+                        last_name = normalize_name(player['name']).split()[-1]
+                        last_names.add(last_name)
+                    
+                    if len(last_names) == 1:
+                        # Same last name = disambiguation case = ALLOW to continue to disambiguation logic
+                        logger.info(f"🔄 FLOW_TRACE [{request_id}]: Early multi-player check found same last name, allowing for disambiguation")
+                    else:
+                        # Different last names = true multi-player = BLOCK
+                        logger.info(f"🚫 FLOW_TRACE [{request_id}]: Multi-player query blocked early - different last names")
+                        
+                        try:
+                            await ctx.message.delete()
+                        except:
+                            pass
+                        
+                        player_names = [p.get('name', 'Unknown') for p in detected_players]
+                        error_msg = await ctx.send(
+                            f"🚫 **Single Player Policy**: Your question appears to reference multiple players "
+                            f"({', '.join(player_names)}). Please ask about one player at a time."
+                        )
+                        await error_msg.delete(delay=8)
+                        return
+                else:
+                    # Fallback block for edge cases
+                    logger.info(f"🚫 FLOW_TRACE [{request_id}]: Multi-player query blocked early - fallback")
+                    return
+            
+            logger.info(f"✅ FLOW_TRACE [{request_id}]: Multi-player check passed, continuing with normal detection")
         except Exception as e:
             logger.warning(f"⚠️ FLOW_TRACE [{request_id}]: Multi-player check failed, falling back to normal detection: {e}")
         
