@@ -260,25 +260,26 @@ def extract_potential_names(text):
             potential_names.append(original_simple)
     
     # Add the original text as fallback (normalized) - but only if it's reasonable length
-    # 🔧 CRITICAL FIX: Filter out stats words AND punctuation from the original text before adding as fallback
-    original_words = text_normalized.split()
-    filtered_original_words = []
-    
-    for word in original_words:
-        # Remove punctuation from word
-        clean_word = re.sub(r'[^\w]', '', word)
-        # Only keep if it's not a stop word, not a non-name word, and has reasonable length
-        if (clean_word and 
-            clean_word not in stop_words and 
-            clean_word not in non_name_words and 
-            len(clean_word) >= 3):
-            filtered_original_words.append(clean_word)
-    
-    if len(filtered_original_words) >= 1:
-        filtered_original = ' '.join(filtered_original_words)
-        if len(filtered_original.replace(' ', '')) >= 3 and filtered_original not in potential_names:
-            potential_names.append(filtered_original)
-            log_info(f"NAME EXTRACTION: Added filtered original text: '{filtered_original}'")
+    # 🔧 CRITICAL FIX: Only add filtered original if it's a single segment (not multi-player)
+    if len(segments) <= 1:  # Only for single-segment queries
+        original_words = text_normalized.split()
+        filtered_original_words = []
+        
+        for word in original_words:
+            # Remove punctuation from word
+            clean_word = re.sub(r'[^\w]', '', word)
+            # Only keep if it's not a stop word, not a non-name word, and has reasonable length
+            if (clean_word and 
+                clean_word not in stop_words and 
+                clean_word not in non_name_words and 
+                len(clean_word) >= 3):
+                filtered_original_words.append(clean_word)
+        
+        if len(filtered_original_words) >= 1:
+            filtered_original = ' '.join(filtered_original_words)
+            if len(filtered_original.replace(' ', '')) >= 3 and filtered_original not in potential_names:
+                potential_names.append(filtered_original)
+                log_info(f"NAME EXTRACTION: Added filtered original text: '{filtered_original}'")
     
     # Remove duplicates while preserving order
     unique_names = []
@@ -288,8 +289,41 @@ def extract_potential_names(text):
             unique_names.append(name)
             seen.add(name)
     
-    log_info(f"NAME EXTRACTION: Found {len(unique_names)} potential names from '{text}': {unique_names}")
-    return unique_names
+    # 🔧 CLEANUP: Remove names that contain separators (they clutter results and aren't useful for matching)
+    separator_chars = [';', '&', '/', '(', ')', '[', ']', ',']
+    
+    # 🔧 TEAM NAME FILTER: Remove team names that shouldn't be treated as player names
+    team_names = {
+        # MLB Teams (full names and common abbreviations)
+        'angels', 'astros', 'athletics', 'blue jays', 'braves', 'brewers', 'cardinals', 'cubs', 
+        'diamondbacks', 'dodgers', 'giants', 'guardians', 'mariners', 'marlins', 'mets', 'nationals',
+        'orioles', 'padres', 'phillies', 'pirates', 'rangers', 'rays', 'red sox', 'reds', 'rockies',
+        'royals', 'tigers', 'twins', 'white sox', 'yankees',
+        # Common abbreviations
+        'laa', 'hou', 'oak', 'tor', 'atl', 'mil', 'stl', 'chc', 'ari', 'lad', 'sf', 'cle', 'sea',
+        'mia', 'nym', 'was', 'bal', 'sd', 'phi', 'pit', 'tex', 'tb', 'bos', 'cin', 'col', 'kc',
+        'det', 'min', 'cws', 'nyy',
+        # Other common team references
+        'team', 'club', 'organization', 'franchise'
+    }
+    
+    cleaned_names = []
+    for name in unique_names:
+        # Filter out separator-containing names
+        if any(sep in name for sep in separator_chars):
+            log_info(f"NAME EXTRACTION: Filtered out separator-containing name: '{name}'")
+            continue
+        
+        # Filter out team names
+        if name.lower() in team_names:
+            log_info(f"NAME EXTRACTION: Filtered out team name: '{name}'")
+            continue
+        
+        # Keep the name if it passes all filters
+        cleaned_names.append(name)
+    
+    log_info(f"NAME EXTRACTION: Found {len(cleaned_names)} potential names from '{text}': {cleaned_names}")
+    return cleaned_names
 
 # -------- LAST NAME MATCHING --------
 
