@@ -260,8 +260,15 @@ def extract_potential_names(text):
             potential_names.append(original_simple)
     
     # Add the original text as fallback (normalized) - but only if it's reasonable length
-    if len(text_normalized.replace(' ', '')) >= min_word_length:
-        potential_names.append(text_normalized)
+    # 🔧 CRITICAL FIX: Filter out stats words from the original text before adding as fallback
+    original_words = text_normalized.split()
+    filtered_original_words = [w for w in original_words if w not in stop_words and w not in non_name_words]
+    
+    if len(filtered_original_words) >= 1:
+        filtered_original = ' '.join(filtered_original_words)
+        if len(filtered_original.replace(' ', '')) >= 3 and filtered_original not in potential_names:
+            potential_names.append(filtered_original)
+            log_info(f"NAME EXTRACTION: Added filtered original text: '{filtered_original}'")
     
     # Remove duplicates while preserving order
     unique_names = []
@@ -805,28 +812,45 @@ def enhanced_validation_with_multi_player_check(query, found_players):
 
 def process_multi_player_query_fixed(original_query):
     """
-    Fixed multi-player query processing
+    Fixed multi-player query processing using simplified detection
     """
     logger.info(f"🔄 MULTI_PLAYER_PROCESSING: Starting processing for '{original_query}'")
     
-    # Step 1: Split the query if it contains conjunctions
-    segments = split_query_on_conjunctions(original_query)
-    logger.info(f"🔄 MULTI_PLAYER_PROCESSING: Split into {len(segments)} segments: {segments}")
+    # Use our simplified detection system instead of the old complex one
+    detected_players = simplified_player_detection(original_query)
     
-    # Step 2: Process each segment to find players
-    all_found_players = process_split_segments(segments)
-    logger.info(f"🔄 MULTI_PLAYER_PROCESSING: Found {len(all_found_players)} total players")
+    # Convert to list if single player returned
+    if detected_players and not isinstance(detected_players, list):
+        detected_players = [detected_players]
+    elif not detected_players:
+        detected_players = []
     
-    # Step 3: Enhanced validation with multi-player blocking
-    should_allow = enhanced_validation_with_multi_player_check(original_query, all_found_players)
+    logger.info(f"🔄 MULTI_PLAYER_PROCESSING: Found {len(detected_players)} total players: {[p['name'] for p in detected_players] if detected_players else []}")
     
-    if not should_allow:
-        logger.info(f"🚫 MULTI_PLAYER_PROCESSING: Query blocked due to multi-player detection")
-        return False, all_found_players
+    # Check if we should block based on multiple distinct last names
+    if len(detected_players) > 1:
+        # Check if they have different last names
+        last_names = set()
+        for player in detected_players:
+            player_name = player.get('name', '')
+            name_parts = normalize_name(player_name).lower().split()
+            if name_parts:
+                last_names.add(name_parts[-1])  # Add last name
+        
+        logger.info(f"🔄 MULTI_PLAYER_PROCESSING: Found {len(last_names)} unique last names: {list(last_names)}")
+        
+        if len(last_names) > 1:
+            # Multiple different last names = multi-player query = BLOCK
+            logger.info(f"🚫 MULTI_PLAYER_PROCESSING: Query blocked due to multiple distinct last names")
+            return False, detected_players
+        else:
+            # Same last name = disambiguation case = ALLOW
+            logger.info(f"✅ MULTI_PLAYER_PROCESSING: Same last name detected, allowing for disambiguation")
+            return True, detected_players
     
-    # Step 4: Continue with normal processing if allowed
+    # Single player or no players - allow normal processing
     logger.info(f"✅ MULTI_PLAYER_PROCESSING: Query approved for normal processing")
-    return True, all_found_players
+    return True, detected_players
 
 # -------- MAIN PLAYER CHECKING FUNCTION --------
 
@@ -1275,23 +1299,81 @@ def check_player_mentioned_original(text, is_recursive_call=False):
 
 def check_player_mentioned(text):
     """
-    Main entry point for player detection - now uses simplified unified approach.
+    🔄 WRAPPER: Main entry point - routes to simplified detection
     """
-    logger.info(f"🔍 DETECTION_TRACE: Starting player detection for query: '{text[:50]}...'")
+    logger.info(f"🔄 WRAPPER: check_player_mentioned() routing to simplified detection for: '{text[:50]}...'")
     
-    # Use the new simplified detection instead of the old complex system
+    # Route directly to simplified detection
     result = simplified_player_detection(text)
     
-    # 🔍 DETECTION_TRACE: Exit point logging
+    # Log the routing
     if result:
         if isinstance(result, list):
-            logger.info(f"🔍 DETECTION_TRACE: Detection complete, returning {len(result)} matches: {[p['name'] for p in result]}")
+            logger.info(f"🔄 WRAPPER: Simplified detection returned {len(result)} matches: {[p['name'] for p in result]}")
         else:
-            logger.info(f"🔍 DETECTION_TRACE: Detection complete, returning single match: {result['name']}")
+            logger.info(f"🔄 WRAPPER: Simplified detection returned single match: {result['name']}")
     else:
-        logger.info(f"🔍 DETECTION_TRACE: Detection complete, returning no matches")
+        logger.info(f"🔄 WRAPPER: Simplified detection returned no matches")
     
     return result
+
+def simplified_fuzzy_match(text, max_results=8):
+    """
+    Simplified fuzzy matching that doesn't call complex extraction logic.
+    Used by simplified_player_detection to avoid circular calls.
+    """
+    logger.info(f"🎯 SIMPLIFIED_FUZZY: Starting for '{text}'")
+    
+    if not players_data:
+        return []
+    
+    matches = []
+    
+    # Direct fuzzy matching against all players
+    for player in players_data:
+        player_name = normalize_name(player['name'])
+        
+        # Calculate similarity
+        similarity = SequenceMatcher(None, text, player_name).ratio()
+        
+        # Get name parts for individual comparison
+        player_name_parts = player_name.split() if ' ' in player_name else [player_name]
+        
+        # Compare against each name part individually
+        best_part_similarity = 0.0
+        for name_part in player_name_parts:
+            part_similarity = SequenceMatcher(None, text, name_part).ratio()
+            if part_similarity > best_part_similarity:
+                best_part_similarity = part_similarity
+        
+        # Use the best similarity
+        best_similarity = max(similarity, best_part_similarity)
+        
+        # Dynamic threshold
+        if ' ' in text:
+            # Multi-word queries need very high similarity
+            threshold = 0.95
+        else:
+            # Single word queries can be more lenient
+            threshold = 0.7
+        
+        if best_similarity >= threshold:
+            logger.info(f"🎯 SIMPLIFIED_FUZZY: '{text}' → {player['name']} ({player['team']}) = {best_similarity:.3f}")
+            matches.append((player, best_similarity))
+    
+    # Sort by score and remove duplicates
+    matches.sort(key=lambda x: x[1], reverse=True)
+    seen_players = set()
+    unique_matches = []
+    
+    for player, score in matches:
+        player_key = f"{normalize_name(player['name'])}|{normalize_name(player['team'])}"
+        if player_key not in seen_players and len(unique_matches) < max_results:
+            unique_matches.append(player)
+            seen_players.add(player_key)
+    
+    logger.info(f"🎯 SIMPLIFIED_FUZZY: Returning {len(unique_matches)} matches: {[p['name'] for p in unique_matches]}")
+    return unique_matches
 
 def simplified_player_detection(text):
     """
@@ -1330,8 +1412,8 @@ def simplified_player_detection(text):
     for potential_name in potential_names:
         logger.info(f"🎯 SIMPLIFIED_DETECTION: Processing potential name: '{potential_name}'")
         
-        # Use fuzzy matching for each potential name
-        name_matches = fuzzy_match_players(potential_name, max_results=5)
+        # Use simplified fuzzy matching for each potential name
+        name_matches = simplified_fuzzy_match(potential_name, max_results=5)
         if name_matches:
             logger.info(f"🎯 SIMPLIFIED_DETECTION: Found {len(name_matches)} matches for '{potential_name}': {[p['name'] for p in name_matches]}")
             all_matches.extend(name_matches)
