@@ -45,13 +45,13 @@ def prevent_infinite_loops(max_calls_per_second=10):
 # -------- SEGMENT CLEANING --------
 
 def clean_segment_for_player_matching(segment):
-    """🔧 NEW: Clean segments of context words that aren't player names"""
+    """🔧 ENHANCED: Clean segments of context words that aren't player names"""
     # Remove common context words that contaminate player name segments
     context_words = {
         'go', 'going', 'diamond', 'diamonds', 'gold', 'silver', 'bronze',
         'will', 'would', 'should', 'could', 'can', 'may', 'might',
         'be', 'being', 'been', 'is', 'are', 'was', 'were',
-        'have', 'has', 'had', 'do', 'does', 'did',
+        'have', 'has', 'had', 'do', 'does', 'did', 'doing',  # Added 'doing'
         'get', 'getting', 'got', 'make', 'making', 'made',
         'take', 'taking', 'took', 'give', 'giving', 'gave',
         'come', 'coming', 'came', 'see', 'seeing', 'saw',
