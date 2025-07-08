@@ -283,42 +283,29 @@ async def ask_question(ctx, *, question: str = None):
         try:
             should_allow, detected_players = process_multi_player_query_fixed(question)
             if not should_allow:
-                # 🔧 CRITICAL FIX: Check if this could be a disambiguation case before blocking
-                if detected_players and len(detected_players) > 1:
-                    # Check if all players have the same last name (disambiguation case)
-                    last_names = set()
-                    for player in detected_players:
-                        last_name = normalize_name(player['name']).split()[-1]
-                        last_names.add(last_name)
-                    
-                    if len(last_names) == 1:
-                        # Same last name = disambiguation case = ALLOW to continue to disambiguation logic
-                        logger.info(f"🔄 FLOW_TRACE [{request_id}]: Early multi-player check found same last name, allowing for disambiguation")
-                    else:
-                        # 🔧 NEW: Use smart logic - only block if query has multi-player keywords
-                        if has_multi_player_keywords(question):
-                            # Different last names + multi-player keywords = true multi-player = BLOCK
-                            logger.info(f"🚫 FLOW_TRACE [{request_id}]: Multi-player query blocked early - different last names + multi-player keywords")
-                            
-                            try:
-                                await ctx.message.delete()
-                            except:
-                                pass
-                            
-                            player_names = [p.get('name', 'Unknown') for p in detected_players]
-                            error_msg = await ctx.send(
-                                f"🚫 **Single Player Policy**: Your question appears to reference multiple players "
-                                f"({', '.join(player_names)}). Please ask about one player at a time."
-                            )
-                            await error_msg.delete(delay=8)
-                            return
-                        else:
-                            # Different last names but no multi-player keywords = disambiguation case = ALLOW
-                            logger.info(f"🔄 FLOW_TRACE [{request_id}]: Early multi-player check found different last names but no multi-player keywords, allowing for disambiguation")
+                # 🔧 CRITICAL FIX: Respect the blocking decision from process_multi_player_query_fixed
+                # If the function says to block, we should block - don't override with our own logic
+                logger.info(f"🚫 FLOW_TRACE [{request_id}]: Multi-player query blocked by process_multi_player_query_fixed")
+                
+                try:
+                    await ctx.message.delete()
+                except:
+                    pass
+                
+                # Use detected players if available, otherwise generic message
+                if detected_players:
+                    player_names = [p.get('name', 'Unknown') for p in detected_players]
+                    error_msg = await ctx.send(
+                        f"🚫 **Single Player Policy**: Your question appears to reference multiple players "
+                        f"({', '.join(player_names)}). Please ask about one player at a time."
+                    )
                 else:
-                    # Fallback block for edge cases
-                    logger.info(f"🚫 FLOW_TRACE [{request_id}]: Multi-player query blocked early - fallback")
-                    return
+                    error_msg = await ctx.send(
+                        f"🚫 **Single Player Policy**: Your question appears to reference multiple players. "
+                        f"Please ask about one player at a time."
+                    )
+                await error_msg.delete(delay=8)
+                return
             
             logger.info(f"✅ FLOW_TRACE [{request_id}]: Multi-player check passed, continuing with normal detection")
         except Exception as e:
