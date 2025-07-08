@@ -311,7 +311,7 @@ async def ask_question(ctx, *, question: str = None):
         except Exception as e:
             logger.warning(f"⚠️ FLOW_TRACE [{request_id}]: Multi-player check failed, falling back to normal detection: {e}")
         
-        logger.info(f"🟡 FLOW_TRACE [{request_id}]: Starting player detection")
+        logger.info(f" FLOW_TRACE [{request_id}]: Starting player detection")
         log_resource_usage("Before Player Detection", request_id)
         matched_players = check_player_mentioned(question)
         logger.info(f"🟡 FLOW_TRACE [{request_id}]: Player detection completed, moving to decision logic")
