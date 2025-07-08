@@ -52,7 +52,7 @@ from config import (
 from logging_system import log_info, log_error, log_success, log_analytics, start_batching, log_memory_usage
 from utils import load_words_from_json, load_players_from_json, load_nicknames_from_json, is_likely_player_request, normalize_name
 from validation import validate_question
-from player_matching import check_player_mentioned, process_multi_player_query_fixed
+from player_matching import check_player_mentioned, process_multi_player_query_fixed, has_multi_player_keywords
 from recent_mentions import check_recent_player_mentions, check_fallback_recent_mentions
 from selection_handlers import start_selection_timeout, cancel_selection_timeout, handle_disambiguation_selection, handle_block_selection, cleanup_invalid_selection
 from bot_logic import process_approved_question, get_potential_player_words, handle_multi_player_question, handle_single_player_question, schedule_answered_message_cleanup
@@ -296,7 +296,6 @@ async def ask_question(ctx, *, question: str = None):
                         logger.info(f"🔄 FLOW_TRACE [{request_id}]: Early multi-player check found same last name, allowing for disambiguation")
                     else:
                         # 🔧 NEW: Use smart logic - only block if query has multi-player keywords
-                        from player_matching import has_multi_player_keywords
                         if has_multi_player_keywords(question):
                             # Different last names + multi-player keywords = true multi-player = BLOCK
                             logger.info(f"🚫 FLOW_TRACE [{request_id}]: Multi-player query blocked early - different last names + multi-player keywords")

@@ -860,47 +860,61 @@ def process_multi_player_query_fixed(original_query):
     """
     logger.info(f"🔄 MULTI_PLAYER_PROCESSING: Starting processing for '{original_query}'")
     
-    # Use our simplified detection system instead of the old complex one
-    detected_players = simplified_player_detection(original_query)
-    
-    # Convert to list if single player returned
-    if detected_players and not isinstance(detected_players, list):
-        detected_players = [detected_players]
-    elif not detected_players:
-        detected_players = []
-    
-    logger.info(f"🔄 MULTI_PLAYER_PROCESSING: Found {len(detected_players)} total players: {[p['name'] for p in detected_players] if detected_players else []}")
-    
-    # Check if we should block based on multiple distinct last names AND multi-player keywords
-    if len(detected_players) > 1:
-        # Check if they have different last names
-        last_names = set()
-        for player in detected_players:
-            player_name = player.get('name', '')
-            name_parts = normalize_name(player_name).lower().split()
-            if name_parts:
-                last_names.add(name_parts[-1])  # Add last name
+    try:
+        # Use our simplified detection system instead of the old complex one
+        detected_players = simplified_player_detection(original_query)
         
-        logger.info(f"🔄 MULTI_PLAYER_PROCESSING: Found {len(last_names)} unique last names: {list(last_names)}")
+        # Convert to list if single player returned
+        if detected_players and not isinstance(detected_players, list):
+            detected_players = [detected_players]
+        elif not detected_players:
+            detected_players = []
         
-        if len(last_names) > 1:
-            # 🔧 CRITICAL FIX: Only block if query has multi-player keywords
-            if has_multi_player_keywords(original_query):
-                # Multiple different last names + multi-player keywords = true multi-player query = BLOCK
-                logger.info(f"🚫 MULTI_PLAYER_PROCESSING: Query blocked - multiple last names + multi-player keywords detected")
-                return False, detected_players
+        logger.info(f"🔄 MULTI_PLAYER_PROCESSING: Found {len(detected_players)} total players: {[p['name'] for p in detected_players] if detected_players else []}")
+        
+        # Check if we should block based on multiple distinct last names AND multi-player keywords
+        if len(detected_players) > 1:
+            # Check if they have different last names
+            last_names = set()
+            for player in detected_players:
+                player_name = player.get('name', '')
+                name_parts = normalize_name(player_name).lower().split()
+                if name_parts:
+                    last_names.add(name_parts[-1])  # Add last name
+            
+            logger.info(f"🔄 MULTI_PLAYER_PROCESSING: Found {len(last_names)} unique last names: {list(last_names)}")
+            
+            if len(last_names) > 1:
+                # 🔧 CRITICAL FIX: Only block if query has multi-player keywords
+                if has_multi_player_keywords(original_query):
+                    # Multiple different last names + multi-player keywords = true multi-player query = BLOCK
+                    logger.info(f"🚫 MULTI_PLAYER_PROCESSING: Query blocked - multiple last names + multi-player keywords detected")
+                    return False, detected_players
+                else:
+                    # Multiple different last names but no multi-player keywords = disambiguation case = ALLOW
+                    logger.info(f"✅ MULTI_PLAYER_PROCESSING: Multiple last names but no multi-player keywords, allowing for disambiguation")
+                    return True, detected_players
             else:
-                # Multiple different last names but no multi-player keywords = disambiguation case = ALLOW
-                logger.info(f"✅ MULTI_PLAYER_PROCESSING: Multiple last names but no multi-player keywords, allowing for disambiguation")
+                # Same last name = disambiguation case = ALLOW
+                logger.info(f"✅ MULTI_PLAYER_PROCESSING: Same last name detected, allowing for disambiguation")
                 return True, detected_players
+        
+        # Single player or no players - allow normal processing
+        logger.info(f"✅ MULTI_PLAYER_PROCESSING: Query approved for normal processing")
+        return True, detected_players
+        
+    except Exception as e:
+        # Handle asyncio and other errors gracefully
+        logger.error(f"🔄 MULTI_PLAYER_PROCESSING: Error during processing: {e}")
+        logger.info(f"🔄 MULTI_PLAYER_PROCESSING: Falling back to keyword-only detection")
+        
+        # Fallback: if we can't run full detection, just check keywords
+        if has_multi_player_keywords(original_query):
+            logger.info(f"🚫 MULTI_PLAYER_PROCESSING: Fallback blocking due to multi-player keywords")
+            return False, []
         else:
-            # Same last name = disambiguation case = ALLOW
-            logger.info(f"✅ MULTI_PLAYER_PROCESSING: Same last name detected, allowing for disambiguation")
-            return True, detected_players
-    
-    # Single player or no players - allow normal processing
-    logger.info(f"✅ MULTI_PLAYER_PROCESSING: Query approved for normal processing")
-    return True, detected_players
+            logger.info(f"✅ MULTI_PLAYER_PROCESSING: Fallback allowing - no multi-player keywords")
+            return True, []
 
 # -------- MAIN PLAYER CHECKING FUNCTION --------
 
