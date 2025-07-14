@@ -1514,38 +1514,70 @@ def validate_suspicious_names_strict(query, suspicious_segments):
     confirmed_players = []
     
     for segment in suspicious_segments:
-        cleaned = clean_segment_for_player_matching(segment)
-        log_info(f"STRICT VALIDATION: Processing segment '{segment}' → '{cleaned}'")
+        # Try multiple cleaning approaches for better player detection
+        cleaning_approaches = [
+            segment.strip(),  # Original segment
+            clean_segment_for_player_matching(segment),  # Aggressive cleaning
+        ]
         
-        # Skip obviously non-name segments
-        if not looks_like_player_name(cleaned):
-            log_info(f"STRICT VALIDATION: Skipping non-name segment: '{cleaned}'")
-            continue
+        # Also try extracting just the potential player names
+        words = segment.strip().split()
+        if len(words) >= 2:
+            # Try different combinations to find player names
+            cleaning_approaches.append(words[0])  # First word
+            cleaning_approaches.append(words[-1])  # Last word (most likely to be player name)
+            if len(words) >= 2:
+                cleaning_approaches.append(f"{words[0]} {words[1]}")  # First two words
+                cleaning_approaches.append(f"{words[-2]} {words[-1]}")  # Last two words
+            if len(words) >= 3:
+                cleaning_approaches.append(f"{words[-3]} {words[-2]} {words[-1]}")  # Last three words
+        elif len(words) == 1:
+            cleaning_approaches.append(words[0])  # Single word
+        
+        log_info(f"STRICT VALIDATION: Processing segment '{segment}' with {len(cleaning_approaches)} approaches")
+        
+        segment_players = []
+        
+        for cleaned in cleaning_approaches:
+            if not cleaned or len(cleaned.strip()) < 2:
+                continue
+                
+            log_info(f"STRICT VALIDATION: Trying approach: '{segment}' → '{cleaned}'")
             
-        # Use existing exact matching (no fuzzy matching to avoid false positives)
-        exact_matches = find_exact_player_matches(cleaned)
-        
-        if exact_matches:
-            log_info(f"STRICT VALIDATION: Found {len(exact_matches)} exact matches for '{cleaned}'")
-            for player in exact_matches:
-                # Use existing validation system
-                if validate_player_mention_in_text(query, player['name'], context="user_question"):
-                    confirmed_players.append(player)
-                    log_info(f"STRICT VALIDATION: Confirmed player: {player['name']}")
-                else:
-                    log_info(f"STRICT VALIDATION: Rejected player: {player['name']} (failed validation)")
-        else:
-            # Try simplified fuzzy matching with very strict threshold
-            fuzzy_matches = simplified_fuzzy_match(cleaned, max_results=3)
-            if fuzzy_matches:
-                log_info(f"STRICT VALIDATION: Found {len(fuzzy_matches)} fuzzy matches for '{cleaned}'")
-                for player in fuzzy_matches:
+            # Skip obviously non-name segments
+            if not looks_like_player_name(cleaned):
+                log_info(f"STRICT VALIDATION: Skipping non-name approach: '{cleaned}'")
+                continue
+                
+            # Use existing exact matching first
+            exact_matches = find_exact_player_matches(cleaned)
+            
+            if exact_matches:
+                log_info(f"STRICT VALIDATION: Found {len(exact_matches)} exact matches for '{cleaned}'")
+                for player in exact_matches:
                     # Use existing validation system
                     if validate_player_mention_in_text(query, player['name'], context="user_question"):
-                        confirmed_players.append(player)
-                        log_info(f"STRICT VALIDATION: Confirmed fuzzy player: {player['name']}")
+                        segment_players.append(player)
+                        log_info(f"STRICT VALIDATION: Confirmed player: {player['name']}")
                     else:
-                        log_info(f"STRICT VALIDATION: Rejected fuzzy player: {player['name']} (failed validation)")
+                        log_info(f"STRICT VALIDATION: Rejected player: {player['name']} (failed validation)")
+                break  # Found exact matches, stop trying other approaches
+            else:
+                # Try simplified fuzzy matching with very strict threshold
+                fuzzy_matches = simplified_fuzzy_match(cleaned, max_results=3)
+                if fuzzy_matches:
+                    log_info(f"STRICT VALIDATION: Found {len(fuzzy_matches)} fuzzy matches for '{cleaned}'")
+                    for player in fuzzy_matches:
+                        # Use existing validation system
+                        if validate_player_mention_in_text(query, player['name'], context="user_question"):
+                            segment_players.append(player)
+                            log_info(f"STRICT VALIDATION: Confirmed fuzzy player: {player['name']}")
+                        else:
+                            log_info(f"STRICT VALIDATION: Rejected fuzzy player: {player['name']} (failed validation)")
+                    if segment_players:  # Found some players, stop trying other approaches
+                        break
+        
+        confirmed_players.extend(segment_players)
     
     # Remove duplicates
     seen_players = set()

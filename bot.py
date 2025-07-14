@@ -280,44 +280,55 @@ async def ask_question(ctx, *, question: str = None):
         logger.info(f"🟡 FLOW_TRACE [{request_id}]: Starting intent-first multi-player detection")
         log_resource_usage("Before Intent Check", request_id)
         
-        # STEP 1: Intent detection (pure linguistic analysis)
-        has_suspicious_pattern, suspicious_segments = has_multi_player_keywords_enhanced(question)
-        
-        if has_suspicious_pattern:
-            logger.info(f"🔍 FLOW_TRACE [{request_id}]: Multi-player intent detected, confirming with validation")
+        try:
+            # STEP 1: Intent detection (pure linguistic analysis)
+            logger.info(f"🔍 FLOW_TRACE [{request_id}]: Calling has_multi_player_keywords_enhanced for: '{question}'")
+            has_suspicious_pattern, suspicious_segments = has_multi_player_keywords_enhanced(question)
+            logger.info(f"🔍 FLOW_TRACE [{request_id}]: Intent detection result: {has_suspicious_pattern}, segments: {suspicious_segments}")
             
-            # STEP 2: Confirmation validation (strict player detection)
-            confirmed_players = validate_suspicious_names_strict(question, suspicious_segments)
-            
-            if len(confirmed_players) >= 2:
-                # Check for different last names
-                last_names = set()
-                for player in confirmed_players:
-                    last_name = normalize_name(player['name']).split()[-1]
-                    last_names.add(last_name)
+            if has_suspicious_pattern:
+                logger.info(f"🔍 FLOW_TRACE [{request_id}]: Multi-player intent detected, confirming with validation")
                 
-                if len(last_names) >= 2:
-                    # STEP 3: Block immediately - confirmed multi-player query
-                    logger.info(f"🚫 FLOW_TRACE [{request_id}]: Confirmed multi-player query blocked - {len(confirmed_players)} players, {len(last_names)} different last names")
+                # STEP 2: Confirmation validation (strict player detection)
+                logger.info(f"🔍 FLOW_TRACE [{request_id}]: Calling validate_suspicious_names_strict")
+                confirmed_players = validate_suspicious_names_strict(question, suspicious_segments)
+                logger.info(f"🔍 FLOW_TRACE [{request_id}]: Validation result: {len(confirmed_players)} confirmed players")
+                
+                if len(confirmed_players) >= 2:
+                    # Check for different last names
+                    last_names = set()
+                    for player in confirmed_players:
+                        last_name = normalize_name(player['name']).split()[-1]
+                        last_names.add(last_name)
                     
-                    try:
-                        await ctx.message.delete()
-                    except:
-                        pass
+                    logger.info(f"🔍 FLOW_TRACE [{request_id}]: Found {len(last_names)} unique last names: {list(last_names)}")
                     
-                    player_names = [p['name'] for p in confirmed_players]
-                    error_msg = await ctx.send(
-                        f"🚫 **Single Player Policy**: Your question appears to reference multiple players "
-                        f"({', '.join(player_names)}). Please ask about one player at a time."
-                    )
-                    await error_msg.delete(delay=8)
-                    return
+                    if len(last_names) >= 2:
+                        # STEP 3: Block immediately - confirmed multi-player query
+                        logger.info(f"🚫 FLOW_TRACE [{request_id}]: Confirmed multi-player query blocked - {len(confirmed_players)} players, {len(last_names)} different last names")
+                        
+                        try:
+                            await ctx.message.delete()
+                        except:
+                            pass
+                        
+                        player_names = [p['name'] for p in confirmed_players]
+                        error_msg = await ctx.send(
+                            f"🚫 **Single Player Policy**: Your question appears to reference multiple players "
+                            f"({', '.join(player_names)}). Please ask about one player at a time."
+                        )
+                        await error_msg.delete(delay=8)
+                        return
+                    else:
+                        logger.info(f"✅ FLOW_TRACE [{request_id}]: Same last name detected, allowing for disambiguation")
                 else:
-                    logger.info(f"✅ FLOW_TRACE [{request_id}]: Same last name detected, allowing for disambiguation")
+                    logger.info(f"✅ FLOW_TRACE [{request_id}]: Intent detected but insufficient confirmed players ({len(confirmed_players)}), continuing")
             else:
-                logger.info(f"✅ FLOW_TRACE [{request_id}]: Intent detected but insufficient confirmed players ({len(confirmed_players)}), continuing")
-        else:
-            logger.info(f"✅ FLOW_TRACE [{request_id}]: No multi-player intent detected, continuing with normal detection")
+                logger.info(f"✅ FLOW_TRACE [{request_id}]: No multi-player intent detected, continuing with normal detection")
+                
+        except Exception as e:
+            logger.error(f"❌ FLOW_TRACE [{request_id}]: Exception in intent detection: {e}")
+            logger.info(f"✅ FLOW_TRACE [{request_id}]: Falling back to normal detection due to intent detection error")
         
         # STEP 4: Normal single-player detection (only if not blocked above)
         logger.info(f"🟡 FLOW_TRACE [{request_id}]: Starting normal player detection")
