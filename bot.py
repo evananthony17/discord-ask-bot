@@ -315,7 +315,7 @@ async def ask_question(ctx, *, question: str = None):
                         player_names = [p['name'] for p in confirmed_players]
                         error_msg = await ctx.send(
                             f"**Single Player Policy**: Your question appears to reference multiple players: "
-                            f"{', '.join(player_names)}. Please ask about one player at a time."
+                            f"{', '.join(player_names)}. Please ask about one player at a time. If this seems incorrect, please contact a mod."
                         )
                         await error_msg.delete(delay=8)
                         return
