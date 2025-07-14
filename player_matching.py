@@ -1363,21 +1363,64 @@ def check_player_mentioned_original(text, is_recursive_call=False):
 
 def check_player_mentioned(text):
     """
-    🔄 WRAPPER: Main entry point - routes to simplified detection
+    🔄 MAIN ENTRY POINT: Unified player detection with intent-first multi-player blocking
+    Returns: 
+    - None: No players found
+    - List of players: Players found (single or multiple for disambiguation)
+    - "BLOCKED": Multi-player query should be blocked
     """
-    logger.info(f"🔄 WRAPPER: check_player_mentioned() routing to simplified detection for: '{text[:50]}...'")
+    logger.info(f"🔄 UNIFIED_DETECTION: Starting unified detection for: '{text[:50]}...'")
     
-    # Route directly to simplified detection
+    # STEP 1: Intent-first multi-player detection
+    logger.info(f"🔍 INTENT_CHECK: Checking for multi-player intent in: '{text}'")
+    has_suspicious_pattern, suspicious_segments = has_multi_player_keywords_enhanced(text)
+    
+    if has_suspicious_pattern:
+        logger.info(f"🔍 INTENT_DETECTED: Multi-player intent found, segments: {suspicious_segments}")
+        
+        # STEP 2: Strict validation to confirm players
+        confirmed_players = validate_suspicious_names_strict(text, suspicious_segments)
+        logger.info(f"🔍 VALIDATION_RESULT: {len(confirmed_players)} confirmed players")
+        
+        if len(confirmed_players) >= 2:
+            # Check for different last names
+            last_names = set()
+            for player in confirmed_players:
+                last_name = normalize_name(player['name']).split()[-1]
+                last_names.add(last_name)
+            
+            logger.info(f"🔍 LAST_NAME_CHECK: {len(last_names)} unique last names: {list(last_names)}")
+            
+            if len(last_names) >= 2:
+                # BLOCK: Multiple players with different last names
+                logger.info(f"🚫 BLOCKING: Multi-player query with different last names")
+                return "BLOCKED"
+            else:
+                # ALLOW: Same last name = disambiguation
+                logger.info(f"✅ ALLOWING: Same last name detected, allowing disambiguation")
+                return confirmed_players
+        elif len(confirmed_players) == 1:
+            # BLOCK: Intent detected but only 1 player confirmed = still multi-player intent
+            logger.info(f"🚫 BLOCKING: Multi-player intent with only 1 confirmed player")
+            return "BLOCKED"
+        else:
+            # CONTINUE: Intent detected but no confirmed players
+            logger.info(f"✅ CONTINUING: Intent detected but no confirmed players, continuing to normal detection")
+    else:
+        logger.info(f"✅ NO_INTENT: No multi-player intent detected, continuing with normal detection")
+    
+    # STEP 3: Normal single-player detection
+    logger.info(f"🎯 NORMAL_DETECTION: Running normal player detection")
     result = simplified_player_detection(text)
     
-    # Log the routing
+    # Log the result
     if result:
         if isinstance(result, list):
-            logger.info(f"🔄 WRAPPER: Simplified detection returned {len(result)} matches: {[p['name'] for p in result]}")
+            logger.info(f"🔄 NORMAL_RESULT: Found {len(result)} matches: {[p['name'] for p in result]}")
         else:
-            logger.info(f"🔄 WRAPPER: Simplified detection returned single match: {result['name']}")
+            logger.info(f"🔄 NORMAL_RESULT: Found single match: {result['name']}")
     else:
-        logger.info(f"🔄 WRAPPER: Simplified detection returned no matches")
+        logger.info(f"🔄 NORMAL_RESULT: No matches found")
     
     return result
 
