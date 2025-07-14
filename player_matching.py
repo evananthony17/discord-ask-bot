@@ -157,9 +157,9 @@ def extract_potential_names(text):
         log_info(f"EXACT MATCH PRIORITY: Found {len(exact_matches)} exact matches, stopping name extraction")
         return [normalize_name(text)]  # Return only the exact match, don't split
     
-    # 🔧 CRITICAL FIX: Split by separators BEFORE normalizing to preserve commas
-    # Split by "and", "&", "vs", "versus", commas, "/", "or", parentheses, brackets, semicolons, etc.
-    segments = re.split(r'\s*(?:and|&|vs\.?|versus|,|/|or|\(|\)|\[|\]|;)\s*', text, flags=re.IGNORECASE)
+    # 🔧 CRITICAL FIX: Word-boundary aware splitting to prevent "Corey" → "C" + "ey"
+    # Split on word-boundary separators only, not characters within words
+    segments = re.split(r'\s+(?:and|&|vs\.?|versus|or)\s+|\s*[,/\(\)\[\];]\s*', text, flags=re.IGNORECASE)
     
     potential_names = []
     
@@ -1438,6 +1438,156 @@ def simplified_fuzzy_match(text, max_results=8):
     
     logger.info(f"🎯 SIMPLIFIED_FUZZY: Returning {len(unique_matches)} matches: {[p['name'] for p in unique_matches]}")
     return unique_matches
+
+def has_multi_player_keywords_enhanced(query):
+    """
+    Enhanced version that returns both detection result AND suspicious segments.
+    Returns: (has_keywords: bool, segments: list)
+    """
+    query_lower = query.lower()
+    
+    # Simple word-based keywords (always count)
+    word_keywords = ['and', '&', 'vs', 'versus', 'or', 'with']
+    for keyword in word_keywords:
+        if f' {keyword} ' in f' {query_lower} ':
+            # Split on this keyword to get segments
+            segments = [seg.strip() for seg in re.split(f'\\s+{re.escape(keyword)}\\s+', query, flags=re.IGNORECASE)]
+            if len(segments) >= 2:
+                log_info(f"INTENT DETECTION: Found '{keyword}' keyword, segments: {segments}")
+                return True, segments
+    
+    # Context-aware separator detection with segment extraction
+    
+    # Check for comma separation (like "Soto, Harper, Trout")
+    if ',' in query:
+        comma_segments = [seg.strip() for seg in query.split(',')]
+        if len(comma_segments) >= 2:
+            # Check if segments look like player names (not commentary)
+            player_like_segments = 0
+            for segment in comma_segments:
+                segment_clean = segment.lower()
+                commentary_words = ['i', 'me', 'my', 'we', 'us', 'our', 'you', 'your', 'he', 'she', 'it', 'they', 'them', 'their',
+                                  'have', 'has', 'had', 'haven', 'hasn', 'hadn', 'been', 'being', 'am', 'is', 'are', 'was', 'were',
+                                  'do', 'does', 'did', 'don', 'doesn', 'didn', 'will', 'would', 'could', 'should', 'can', 'may',
+                                  'paying', 'attention', 'recently', 'lately', 'watching', 'following', 'tracking', 'monitoring']
+                
+                segment_words = segment_clean.split()
+                if segment_words and not any(word in commentary_words for word in segment_words):
+                    if any(word.isalpha() and len(word) >= 3 for word in segment_words):
+                        player_like_segments += 1
+            
+            if player_like_segments >= 2:
+                log_info(f"INTENT DETECTION: Found comma separation with {player_like_segments} player-like segments")
+                return True, comma_segments
+    
+    # Check for semicolon separation (like "Soto;Harper;Trout")
+    if ';' in query:
+        semicolon_segments = [seg.strip() for seg in query.split(';')]
+        if len(semicolon_segments) >= 2:
+            name_like_segments = sum(1 for seg in semicolon_segments 
+                                   if seg and any(word.isalpha() and len(word) >= 3 for word in seg.split()))
+            if name_like_segments >= 2:
+                log_info(f"INTENT DETECTION: Found semicolon separation with {name_like_segments} name-like segments")
+                return True, semicolon_segments
+    
+    # Check for slash separation (like "Soto/Harper/Trout")
+    if '/' in query:
+        slash_segments = [seg.strip() for seg in query.split('/')]
+        if len(slash_segments) >= 2:
+            name_like_segments = sum(1 for seg in slash_segments 
+                                   if seg and any(word.isalpha() and len(word) >= 3 for word in seg.split()))
+            if name_like_segments >= 2:
+                log_info(f"INTENT DETECTION: Found slash separation with {name_like_segments} name-like segments")
+                return True, slash_segments
+    
+    return False, []
+
+def validate_suspicious_names_strict(query, suspicious_segments):
+    """
+    Strict validation using existing systems for Stage 2 confirmation.
+    Uses exact matching and existing validation to prevent false positives.
+    """
+    from player_matching_validator import validate_player_mention_in_text
+    
+    log_info(f"STRICT VALIDATION: Checking {len(suspicious_segments)} segments for '{query}'")
+    
+    confirmed_players = []
+    
+    for segment in suspicious_segments:
+        cleaned = clean_segment_for_player_matching(segment)
+        log_info(f"STRICT VALIDATION: Processing segment '{segment}' → '{cleaned}'")
+        
+        # Skip obviously non-name segments
+        if not looks_like_player_name(cleaned):
+            log_info(f"STRICT VALIDATION: Skipping non-name segment: '{cleaned}'")
+            continue
+            
+        # Use existing exact matching (no fuzzy matching to avoid false positives)
+        exact_matches = find_exact_player_matches(cleaned)
+        
+        if exact_matches:
+            log_info(f"STRICT VALIDATION: Found {len(exact_matches)} exact matches for '{cleaned}'")
+            for player in exact_matches:
+                # Use existing validation system
+                if validate_player_mention_in_text(query, player['name'], context="user_question"):
+                    confirmed_players.append(player)
+                    log_info(f"STRICT VALIDATION: Confirmed player: {player['name']}")
+                else:
+                    log_info(f"STRICT VALIDATION: Rejected player: {player['name']} (failed validation)")
+        else:
+            # Try simplified fuzzy matching with very strict threshold
+            fuzzy_matches = simplified_fuzzy_match(cleaned, max_results=3)
+            if fuzzy_matches:
+                log_info(f"STRICT VALIDATION: Found {len(fuzzy_matches)} fuzzy matches for '{cleaned}'")
+                for player in fuzzy_matches:
+                    # Use existing validation system
+                    if validate_player_mention_in_text(query, player['name'], context="user_question"):
+                        confirmed_players.append(player)
+                        log_info(f"STRICT VALIDATION: Confirmed fuzzy player: {player['name']}")
+                    else:
+                        log_info(f"STRICT VALIDATION: Rejected fuzzy player: {player['name']} (failed validation)")
+    
+    # Remove duplicates
+    seen_players = set()
+    unique_confirmed = []
+    for player in confirmed_players:
+        player_key = f"{normalize_name(player['name'])}|{normalize_name(player['team'])}"
+        if player_key not in seen_players:
+            unique_confirmed.append(player)
+            seen_players.add(player_key)
+    
+    log_info(f"STRICT VALIDATION: Confirmed {len(unique_confirmed)} unique players: {[p['name'] for p in unique_confirmed]}")
+    return unique_confirmed
+
+def looks_like_player_name(segment):
+    """
+    Quick heuristic to filter out obviously non-name segments before any matching.
+    """
+    segment_lower = segment.lower().strip()
+    
+    # Obvious non-names
+    non_name_phrases = {
+        'bench', 'sit', 'start', 'drop', 'add', 'trade', 'keep', 'hold',
+        'him', 'her', 'them', 'it', 'this', 'that', 'these', 'those',
+        'today', 'tomorrow', 'yesterday', 'now', 'later', 'soon',
+        'good', 'bad', 'better', 'worse', 'best', 'worst',
+        'stats', 'numbers', 'projections', 'value', 'points',
+        'looking', 'doing', 'going', 'playing', 'performing'
+    }
+    
+    if segment_lower in non_name_phrases:
+        return False
+        
+    # Must have reasonable name characteristics
+    words = segment.split()
+    if len(words) > 3:  # Names rarely have more than 3 words
+        return False
+        
+    # Must have alphabetic content
+    if not any(word.isalpha() and len(word) >= 2 for word in words):
+        return False
+        
+    return True
 
 def has_multi_player_keywords(query):
     """

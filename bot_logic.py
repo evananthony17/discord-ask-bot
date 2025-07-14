@@ -9,72 +9,31 @@ from question_map_store import load_question_map, save_question_map, append_ques
 # -------- MULTI-PLAYER QUESTION PROCESSING --------
 
 async def handle_multi_player_question(ctx, question, matched_players, question_map):
-    """🔧 SMART: Handle questions about multiple players with disambiguation vs multi-player logic"""
+    """Handle disambiguation for players with same last name (multi-player blocking now handled in bot.py)"""
     # Import here to avoid circular imports
-    from recent_mentions import check_recent_player_mentions
-    from player_matching import capture_all_raw_player_detections, has_multi_player_keywords
     from utils import normalize_name
     
-    print(f"MULTI-PLAYER QUESTION: Found {len(matched_players)} players, applying smart logic")
+    print(f"DISAMBIGUATION: Found {len(matched_players)} players for disambiguation")
     
-    # 🔧 SMART LOGIC: Check if this should be blocked or allowed for disambiguation
-    last_names = set()
-    for player in matched_players:
-        last_name = normalize_name(player['name']).split()[-1]
-        last_names.add(last_name)
+    log_info(f"🔍 DISAMBIGUATION: Found {len(matched_players)} players")
+    log_info(f"🔍 DISAMBIGUATION: Players: {[p['name'] for p in matched_players]}")
     
-    log_info(f"🔍 SMART LOGIC: Found {len(matched_players)} players with {len(last_names)} unique last names")
-    log_info(f"🔍 SMART LOGIC: Players: {[p['name'] for p in matched_players]}")
-    log_info(f"🔍 SMART LOGIC: Last names: {list(last_names)}")
+    # Create disambiguation prompt (no more duplicate multi-player logic)
+    from selection_handlers import create_player_disambiguation_prompt
+    await create_player_disambiguation_prompt(ctx, question, matched_players)
     
-    # Check if this should be blocked as true multi-player or allowed for disambiguation
-    if len(last_names) > 1 and has_multi_player_keywords(question):
-        # Multiple different last names + multi-player keywords = TRUE MULTI-PLAYER = BLOCK
-        log_info(f"🚫 TRUE MULTI-PLAYER: Question blocked - multiple last names + keywords detected")
-        
-        validated_names_str = ", ".join([p['name'] for p in matched_players])
-        blocker_message = f"You may only ask about one player. Your question has been blocked as you asked about: {validated_names_str}"
-        
-        try:
-            await ctx.message.delete()
-        except:
-            pass
-        
-        error_msg = await ctx.send(blocker_message)
-        await error_msg.delete(delay=10)
-        
-        # Log the true multi-player violation
-        await log_analytics("Single Player Policy",
-            user_id=ctx.author.id,
-            user_name=ctx.author.display_name,
-            channel=ctx.channel.name,
-            question=question,
-            validated_players=len(matched_players),
-            detected_names=[p['name'] for p in matched_players],
-            status="blocked_true_multi_player"
-        )
-        
-        return True  # Blocked as true multi-player
-    else:
-        # Same last name OR different last names without keywords = DISAMBIGUATION CASE = ALLOW
-        log_info(f"✅ DISAMBIGUATION CASE: Allowing disambiguation for {len(matched_players)} players")
-        
-        # Create disambiguation prompt
-        from selection_handlers import create_player_disambiguation_prompt
-        await create_player_disambiguation_prompt(ctx, question, matched_players)
-        
-        # Log the disambiguation case
-        await log_analytics("Player Disambiguation",
-            user_id=ctx.author.id,
-            user_name=ctx.author.display_name,
-            channel=ctx.channel.name,
-            question=question,
-            validated_players=len(matched_players),
-            detected_names=[p['name'] for p in matched_players],
-            status="disambiguation_shown"
-        )
-        
-        return False  # Not blocked - disambiguation shown
+    # Log the disambiguation case
+    await log_analytics("Player Disambiguation",
+        user_id=ctx.author.id,
+        user_name=ctx.author.display_name,
+        channel=ctx.channel.name,
+        question=question,
+        validated_players=len(matched_players),
+        detected_names=[p['name'] for p in matched_players],
+        status="disambiguation_shown"
+    )
+    
+    return False  # Not blocked - disambiguation shown
 
 # -------- SINGLE PLAYER QUESTION PROCESSING --------
 
