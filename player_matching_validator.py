@@ -372,6 +372,29 @@ def validate_player_mention_in_text(text, player_name, context=None):
     
     player_words = player_normalized.split()
     
+    # 🔧 CRITICAL FIX: Enhanced last name matching for compound names like "De La Cruz"
+    # Extract the actual last name (last word) from player name
+    if player_words:
+        actual_last_name = player_words[-1]
+        
+        # Check if the actual last name appears in the text
+        if actual_last_name in text_words:
+            log_info(f"MENTION VALIDATION PASSED: '{player_name}' found via last name '{actual_last_name}' in '{text}' (context: {context})")
+            return True
+        
+        # For compound last names like "De La Cruz", also check if any significant part matches
+        # Look for compound name patterns (2+ consecutive words that could be a compound last name)
+        for i in range(len(player_words) - 1):
+            compound_part = player_words[i]
+            # Check if this could be part of a compound last name (like "De", "La", "Van", etc.)
+            if len(compound_part) >= 2 and compound_part in text_words:
+                # Check if the following word is also in the text (like "La" followed by "Cruz")
+                if i + 1 < len(player_words):
+                    next_part = player_words[i + 1]
+                    if next_part in text_words:
+                        log_info(f"MENTION VALIDATION PASSED: '{player_name}' found via compound name parts '{compound_part} {next_part}' in '{text}' (context: {context})")
+                        return True
+    
     # Count how many player name parts appear in the text
     matching_parts = sum(1 for part in player_words if part in text_words)
     

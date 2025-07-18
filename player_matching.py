@@ -209,17 +209,57 @@ def extract_potential_names(text):
     }
     
     # ENHANCED: Increase minimum length requirement for individual words
-    min_word_length = 5  # Changed from 4 to 5 to eliminate "kill", "hope", etc.
+    min_word_length = 4  # Reduced back to 4 to allow "seth" and "lugo"
     
     # Split into words and remove stop words
     words = text_normalized.split()
     filtered_words = [w for w in words if w not in stop_words and len(w) >= min_word_length]
     
-    # Look for 2-word combinations that might be names (like "Christian Moore")
+    # 🔧 CRITICAL FIX: Look for 2-word combinations that might be names (like "Alex Vesia")
+    # Use original words (not just filtered) to catch names that might include shorter words
+    original_words = text_normalized.split()
+    
+    # First, try combinations from filtered words (higher quality)
     for i in range(len(filtered_words) - 1):
         name_combo = f"{filtered_words[i]} {filtered_words[i+1]}"
         if len(name_combo) >= 7:  # Minimum reasonable full name length
             potential_names.append(name_combo)
+    
+    # 🔧 ENHANCED: Expanded non-name words and stricter criteria for individual words
+    non_name_words = {
+        'stats', 'news', 'info', 'question', 'playing', 'game', 'season', 'year', 'team',
+        'downdate', 'upgrade', 'downgrade', 'update', 'like', 'more', 'less', 'better', 'worse',
+        'good', 'bad', 'nice', 'cool', 'awesome', 'great', 'terrible', 'amazing', 'fantastic',
+        'horrible', 'perfect', 'awful', 'wonderful', 'excellent', 'outstanding', 'impressive',
+        'doing', 'going', 'coming', 'looking', 'getting', 'having', 'being', 'seeing',
+        'thinking', 'feeling', 'knowing', 'saying', 'telling', 'asking', 'giving', 'taking',
+        # CRITICAL: Add more problematic words
+        'quiet', 'somehow', 'doesnt', 'players', 'player', 'baseball', 'football', 'basketball',
+        'hockey', 'soccer', 'sports', 'athlete', 'athletes', 'roster', 'trade', 'trades',
+        'draft', 'drafts', 'contract', 'contracts', 'salary', 'salaries', 'money', 'dollars',
+        'worth', 'value', 'performance', 'talent', 'skill', 'skills', 'ability', 'abilities'
+    }
+
+    # 🔧 NEW: Also try combinations from original words to catch names like "Alex Vesia"
+    for i in range(len(original_words) - 1):
+        word1, word2 = original_words[i], original_words[i+1]
+        
+        # Skip if both words are stop words
+        if word1 in stop_words and word2 in stop_words:
+            continue
+            
+        # Skip if either word is too short
+        if len(word1) < 3 or len(word2) < 3:
+            continue
+            
+        # Skip if either word is clearly not a name
+        if word1 in non_name_words or word2 in non_name_words:
+            continue
+            
+        name_combo = f"{word1} {word2}"
+        if len(name_combo) >= 7 and name_combo not in potential_names:  # Avoid duplicates
+            potential_names.append(name_combo)
+            log_info(f"NAME EXTRACTION: Added 2-word combo from original: '{name_combo}'")
     
     # Look for 3-word combinations (like "Juan Soto Jr")
     for i in range(len(filtered_words) - 2):
@@ -1501,27 +1541,57 @@ def has_multi_player_keywords_enhanced(query):
     
     # Context-aware separator detection with segment extraction
     
-    # Check for comma separation (like "Soto, Harper, Trout")
+    # 🔧 CRITICAL FIX: Much stricter comma detection to prevent false positives
+    # Check for comma separation (like "Soto, Harper, Trout") but NOT natural language commas
     if ',' in query:
         comma_segments = [seg.strip() for seg in query.split(',')]
         if len(comma_segments) >= 2:
-            # Check if segments look like player names (not commentary)
+            # 🔧 ENHANCED: Much stricter criteria for comma-based multi-player detection
             player_like_segments = 0
-            for segment in comma_segments:
-                segment_clean = segment.lower()
-                commentary_words = ['i', 'me', 'my', 'we', 'us', 'our', 'you', 'your', 'he', 'she', 'it', 'they', 'them', 'their',
-                                  'have', 'has', 'had', 'haven', 'hasn', 'hadn', 'been', 'being', 'am', 'is', 'are', 'was', 'were',
-                                  'do', 'does', 'did', 'don', 'doesn', 'didn', 'will', 'would', 'could', 'should', 'can', 'may',
-                                  'paying', 'attention', 'recently', 'lately', 'watching', 'following', 'tracking', 'monitoring']
-                
-                segment_words = segment_clean.split()
-                if segment_words and not any(word in commentary_words for word in segment_words):
-                    if any(word.isalpha() and len(word) >= 3 for word in segment_words):
-                        player_like_segments += 1
+            natural_language_indicators = 0
             
-            if player_like_segments >= 2:
-                log_info(f"INTENT DETECTION: Found comma separation with {player_like_segments} player-like segments")
+            for segment in comma_segments:
+                segment_clean = segment.lower().strip()
+                segment_words = segment_clean.split()
+                
+                # Check for natural language patterns that indicate this is NOT multi-player
+                natural_language_patterns = [
+                    # Question patterns
+                    'what', 'how', 'when', 'where', 'why', 'who', 'which',
+                    # Commentary patterns  
+                    'i', 'me', 'my', 'we', 'us', 'our', 'you', 'your', 'he', 'she', 'it', 'they', 'them', 'their',
+                    # Verb patterns
+                    'have', 'has', 'had', 'haven', 'hasn', 'hadn', 'been', 'being', 'am', 'is', 'are', 'was', 'were',
+                    'do', 'does', 'did', 'don', 'doesn', 'didn', 'will', 'would', 'could', 'should', 'can', 'may',
+                    'went', 'go', 'going', 'come', 'coming', 'get', 'getting', 'look', 'looking', 'see', 'seeing',
+                    # Context patterns
+                    'paying', 'attention', 'recently', 'lately', 'watching', 'following', 'tracking', 'monitoring',
+                    'update', 'last', 'next', 'this', 'that', 'the', 'a', 'an',
+                    # Fantasy patterns
+                    'path', 'gold', 'diamond', 'silver', 'bronze', 'like', 'looking'
+                ]
+                
+                # Count natural language indicators
+                if segment_words:
+                    for word in segment_words:
+                        if word in natural_language_patterns:
+                            natural_language_indicators += 1
+                            break  # Only count once per segment
+                
+                # 🔧 STRICTER: Only count as player-like if it looks like a simple name
+                # Must be 1-3 words, mostly alphabetic, no obvious question/commentary words
+                if (len(segment_words) >= 1 and len(segment_words) <= 3 and
+                    all(word.isalpha() and len(word) >= 2 for word in segment_words) and
+                    not any(word in natural_language_patterns for word in segment_words)):
+                    player_like_segments += 1
+            
+            # 🔧 CRITICAL: Only trigger if we have multiple player-like segments AND minimal natural language
+            # This prevents "seth lugo went +2 to 78 last update, what's the path to gold looking like?" from triggering
+            if player_like_segments >= 2 and natural_language_indicators <= 1:
+                log_info(f"INTENT DETECTION: Found comma separation with {player_like_segments} player-like segments and {natural_language_indicators} natural language indicators")
                 return True, comma_segments
+            else:
+                log_info(f"INTENT DETECTION: Comma found but rejected - {player_like_segments} player-like segments, {natural_language_indicators} natural language indicators")
     
     # Check for semicolon separation (like "Soto;Harper;Trout")
     if ';' in query:
