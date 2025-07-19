@@ -1529,8 +1529,11 @@ def has_multi_player_keywords_enhanced(query):
     """
     query_lower = query.lower()
     
-    # Simple word-based keywords (always count)
-    word_keywords = ['and', '&', 'vs', 'versus', 'or', 'with']
+    # 🔧 CRITICAL FIX: Context-aware "or" detection
+    # Only treat "or" as multi-player if it's actually comparing players, not presenting options about one player
+    
+    # Simple word-based keywords (always count except "or")
+    word_keywords = ['and', '&', 'vs', 'versus', 'with']
     for keyword in word_keywords:
         if f' {keyword} ' in f' {query_lower} ':
             # Split on this keyword to get segments
@@ -1538,6 +1541,56 @@ def has_multi_player_keywords_enhanced(query):
             if len(segments) >= 2:
                 log_info(f"INTENT DETECTION: Found '{keyword}' keyword, segments: {segments}")
                 return True, segments
+    
+    # 🔧 SPECIAL HANDLING FOR "OR": Context-aware detection
+    if ' or ' in f' {query_lower} ':
+        # Split on "or" to get segments
+        segments = [seg.strip() for seg in re.split(r'\s+or\s+', query, flags=re.IGNORECASE)]
+        if len(segments) >= 2:
+            # Check if this is a true multi-player comparison vs single-player options
+            
+            # Patterns that indicate single-player with options (NOT multi-player)
+            single_player_patterns = [
+                # Decision patterns about one player
+                r'should\s+(we|i)\s+(bail|drop|sit|bench|start)',
+                r'is\s+(he|she|it)\s+(playing|sitting|starting)',
+                r'(is\s+it|are\s+we)\s+(early|late|too)',
+                r'should\s+(i|we)\s+(start|bench|sit)',
+                # Timing/status patterns
+                r'(early|late)\s+enough',
+                r'(too\s+)?(early|late)',
+                r'(playing|sitting)\s+(today|tonight|tomorrow)',
+                # Pronoun references (indicates same player)
+                r'\b(he|she|it|him|her)\b',
+            ]
+            
+            # Check if any single-player patterns match
+            for pattern in single_player_patterns:
+                if re.search(pattern, query_lower):
+                    log_info(f"INTENT DETECTION: Found 'or' but detected single-player pattern: {pattern}")
+                    log_info(f"INTENT DETECTION: Treating as single-player question, not multi-player")
+                    return False, []
+            
+            # If no single-player patterns, check if segments look like player comparisons
+            # True multi-player patterns
+            multi_player_patterns = [
+                r'(who\s+is\s+better|which\s+is\s+better)',
+                r'(soto|judge|ohtani|trout|acuna|betts)',  # Common player names in comparisons
+                r'(start\s+\w+\s+or\s+\w+)',  # "start X or Y"
+                r'(\w+\s+or\s+\w+\s+for)',  # "X or Y for tonight"
+            ]
+            
+            # Check if this looks like a true multi-player comparison
+            for pattern in multi_player_patterns:
+                if re.search(pattern, query_lower):
+                    log_info(f"INTENT DETECTION: Found 'or' with multi-player pattern: {pattern}")
+                    log_info(f"INTENT DETECTION: Found 'or' keyword, segments: {segments}")
+                    return True, segments
+            
+            # Default: if "or" found but no clear patterns, be conservative and don't trigger
+            log_info(f"INTENT DETECTION: Found 'or' but no clear multi-player or single-player patterns")
+            log_info(f"INTENT DETECTION: Being conservative, treating as potential single-player")
+            return False, []
     
     # Context-aware separator detection with segment extraction
     

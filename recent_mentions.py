@@ -255,6 +255,8 @@ def check_player_mention_hierarchical(player_name_normalized, player_uuid, messa
         # LEVEL 3: Last name with enhanced validation (medium confidence = 0.7)
         if ' ' in player_name_normalized:
             lastname = player_name_normalized.split()[-1]
+            firstname = player_name_normalized.split()[0]
+            
             # 🔧 FIXED: Prevent partial word matches like "last" matching "lasts"
             # Use stricter word boundary pattern that requires exact word match
             lastname_pattern = f"\\b{re.escape(lastname)}\\b(?![a-z])"
@@ -269,16 +271,77 @@ def check_player_mention_hierarchical(player_name_normalized, player_uuid, messa
                         log_info(f"🔍 LEVEL 3 DEBUG: Found exact lastname '{lastname}' in '{scanning_normalized[:50]}...'")
                         log_info(f"🔍 LEVEL 3 DEBUG: Baseball context check result: {validate_baseball_context(scanning_normalized, lastname)}")
                     
-                    # Enhanced validation: baseball context + phrase validation
-                    if validate_baseball_context(scanning_normalized, lastname):
-                        # Additional phrase validation for lastname matches
-                        mock_player = {'name': player_name_normalized, 'team': 'Unknown'}
-                        validated_matches = validate_player_matches(scanning_normalized, [mock_player], context="expert_reply")
-                        if validated_matches:
-                            return True, "lastname_with_context_validated", 0.7
+                    # 🔧 CRITICAL FIX: For lastname matches, also check if the first name is present
+                    # This prevents "Brayan Abreu" from matching messages about "Wilyer Abreu"
+                    firstname_pattern = f"\\b{re.escape(firstname)}\\b(?![a-z])"
+                    firstname_in_message = bool(re.search(firstname_pattern, scanning_normalized, re.IGNORECASE))
+                    
+                    if firstname_in_message:
+                        # Both first and last name found - this is a strong match
+                        log_info(f"RECENT MENTION VALIDATION: Found both '{firstname}' and '{lastname}' in message - strong match")
+                        
+                        # Enhanced validation: baseball context + phrase validation
+                        if validate_baseball_context(scanning_normalized, lastname):
+                            # Additional phrase validation for lastname matches
+                            mock_player = {'name': player_name_normalized, 'team': 'Unknown'}
+                            validated_matches = validate_player_matches(scanning_normalized, [mock_player], context="expert_reply")
+                            if validated_matches:
+                                return True, "full_name_with_context_validated", 0.9  # Higher confidence for full name
+                            else:
+                                log_info(f"RECENT MENTION VALIDATION: Full name match for '{firstname} {lastname}' rejected by phrase validation")
+                                return False, "full_name_context_rejected", 0.0
+                    else:
+                        # Only lastname found - check if this could be a different player with same lastname
+                        log_info(f"RECENT MENTION VALIDATION: Found lastname '{lastname}' but not firstname '{firstname}' - checking for disambiguation")
+                        
+                        # Look for any other first name in the message that might indicate a different player
+                        message_words = scanning_normalized.split()
+                        potential_other_firstnames = []
+                        
+                        # Define common words to skip when looking for potential first names
+                        common_words = {
+                            'the', 'and', 'or', 'but', 'for', 'with', 'have', 'has', 'had', 'been', 'being', 'was', 'were', 'are', 'is',
+                            'i', 'as', 'a', 'an', 'he', 'she', 'it', 'they', 'them', 'their', 'his', 'her', 'him', 'my', 'me', 'we', 'us', 'our',
+                            'you', 'your', 'this', 'that', 'these', 'those', 'what', 'when', 'where', 'why', 'who', 'how', 'which', 'whose', 'whom',
+                            'will', 'would', 'could', 'should', 'can', 'may', 'might', 'must', 'shall', 'do', 'does', 'did', 'done',
+                            'get', 'got', 'getting', 'go', 'going', 'went', 'gone', 'come', 'coming', 'came', 'see', 'seeing', 'saw', 'seen',
+                            'look', 'looking', 'looked', 'find', 'finding', 'found', 'take', 'taking', 'took', 'taken', 'give', 'giving', 'gave', 'given',
+                            'make', 'making', 'made', 'put', 'putting', 'say', 'saying', 'said', 'tell', 'telling', 'told', 'know', 'knowing', 'knew', 'known',
+                            'think', 'thinking', 'thought', 'feel', 'feeling', 'felt', 'want', 'wanting', 'wanted', 'need', 'needing', 'needed',
+                            'like', 'liking', 'liked', 'love', 'loving', 'loved', 'help', 'helping', 'helped', 'try', 'trying', 'tried',
+                            'work', 'working', 'worked', 'play', 'playing', 'played', 'run', 'running', 'ran', 'walk', 'walking', 'walked',
+                            'talk', 'talking', 'talked', 'ask', 'asking', 'asked', 'answer', 'answering', 'answered', 'call', 'calling', 'called',
+                            'move', 'moving', 'moved', 'turn', 'turning', 'turned', 'start', 'starting', 'started', 'stop', 'stopping', 'stopped',
+                            'solid', 'pickup', 'category', 'steals', 'performing', 'well', 'lately'
+                        }
+                        
+                        for word in message_words:
+                            # Skip common words and the lastname we already found
+                            if (len(word) >= 3 and 
+                                word.lower() != lastname.lower() and 
+                                word.lower() not in common_words and
+                                word.isalpha()):
+                                potential_other_firstnames.append(word)
+                        
+                        if potential_other_firstnames:
+                            log_info(f"RECENT MENTION VALIDATION: Found potential other first names: {potential_other_firstnames}")
+                            log_info(f"RECENT MENTION VALIDATION: Lastname '{lastname}' likely refers to different player, not '{firstname} {lastname}'")
+                            return False, "lastname_different_player", 0.0
                         else:
-                            log_info(f"RECENT MENTION VALIDATION: Lastname match for '{lastname}' rejected by phrase validation")
-                            return False, "lastname_context_rejected", 0.0
+                            # No other first names found, could still be the same player referenced by lastname only
+                            # But be more conservative - require baseball context
+                            if validate_baseball_context(scanning_normalized, lastname):
+                                # Additional phrase validation for lastname matches
+                                mock_player = {'name': player_name_normalized, 'team': 'Unknown'}
+                                validated_matches = validate_player_matches(scanning_normalized, [mock_player], context="expert_reply")
+                                if validated_matches:
+                                    return True, "lastname_only_with_context_validated", 0.6  # Lower confidence for lastname only
+                                else:
+                                    log_info(f"RECENT MENTION VALIDATION: Lastname-only match for '{lastname}' rejected by phrase validation")
+                                    return False, "lastname_only_context_rejected", 0.0
+                            else:
+                                log_info(f"RECENT MENTION VALIDATION: Lastname-only match for '{lastname}' rejected - insufficient baseball context")
+                                return False, "lastname_only_no_context", 0.0
                 else:
                     log_info(f"RECENT MENTION VALIDATION: Lastname '{lastname}' found but only as partial match - rejecting")
                     return False, "lastname_partial_match_rejected", 0.0
