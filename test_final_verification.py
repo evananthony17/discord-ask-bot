@@ -1,54 +1,125 @@
-from player_matching import has_multi_player_keywords, process_multi_player_query_fixed
-from utils import load_players_from_json, normalize_name
-from config import players_data
+#!/usr/bin/env python3
 
-print("=== FINAL VERIFICATION TEST ===")
+"""
+Final verification test to ensure both issues are resolved:
+1. log_memory_usage function is available
+2. Common English words are not validated as player names
+"""
 
-# Load the player data
-loaded_players = load_players_from_json("players.json")
-players_data.clear()
-players_data.extend(loaded_players)
-print(f"Loaded {len(players_data)} players")
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-# Test the exact query from the logs
-query = "How are Suarez and Chapman doing"
-print(f"\nTesting: '{query}'")
-
-# Test 1: Keyword detection
-has_keywords = has_multi_player_keywords(query)
-print(f"1. Has multi-player keywords: {has_keywords}")
-
-# Test 2: Full multi-player processing
-try:
-    should_allow, detected_players = process_multi_player_query_fixed(query)
-    print(f"2. Multi-player processing result:")
-    print(f"   Should allow: {should_allow}")
-    print(f"   Detected players: {len(detected_players) if detected_players else 0}")
+def test_log_memory_usage():
+    """Test that log_memory_usage function is available and working"""
+    print("=" * 60)
+    print("TESTING log_memory_usage FUNCTION")
+    print("=" * 60)
     
-    if detected_players:
-        print("   Players found:")
-        for player in detected_players:
-            print(f"     - {player['name']} ({player['team']})")
+    try:
+        from logging_system import log_memory_usage
+        print("✅ log_memory_usage imported successfully")
         
-        # Check last names
-        last_names = set()
-        for player in detected_players:
-            last_name = normalize_name(player['name']).split()[-1]
-            last_names.add(last_name)
+        # Test the function
+        log_memory_usage("Test Stage", "test_request_123")
+        print("✅ log_memory_usage function executed successfully")
         
-        print(f"   Unique last names: {list(last_names)} (count: {len(last_names)})")
+        return True
+    except ImportError as e:
+        print(f"❌ Import error: {e}")
+        return False
+    except Exception as e:
+        print(f"❌ Function error: {e}")
+        return False
+
+def test_validation_fix():
+    """Test that common English words are rejected as player names"""
+    print("\n" + "=" * 60)
+    print("TESTING VALIDATION FIX")
+    print("=" * 60)
     
-    print(f"\n🎯 FINAL RESULT:")
-    if should_allow:
-        print("   ❌ QUERY WOULD BE ALLOWED (this is wrong)")
+    try:
+        from player_matching_validator import validate_player_matches
+        
+        question = "should we bail on Okert or is it early enough that he can make up for tonight?"
+        
+        # Test that common words are rejected
+        common_words = ['should', 'bail', 'early', 'enough', 'that', 'make']
+        all_rejected = True
+        
+        for word in common_words:
+            mock_players = [{'name': word, 'team': 'Unknown'}]
+            validated = validate_player_matches(question, mock_players)
+            
+            if validated:
+                print(f"❌ FAILED: '{word}' was incorrectly validated as a player name")
+                all_rejected = False
+            else:
+                print(f"✅ PASSED: '{word}' was correctly rejected")
+        
+        # Test that real player names still work
+        real_player = [{'name': 'okert', 'team': 'Giants'}]
+        validated = validate_player_matches(question, real_player)
+        
+        if validated:
+            print(f"✅ PASSED: Real player 'okert' was correctly validated")
+        else:
+            print(f"❌ FAILED: Real player 'okert' was incorrectly rejected")
+            all_rejected = False
+        
+        return all_rejected
+        
+    except Exception as e:
+        print(f"❌ Validation test error: {e}")
+        return False
+
+def test_bot_import():
+    """Test that bot.py imports without errors"""
+    print("\n" + "=" * 60)
+    print("TESTING BOT.PY IMPORT")
+    print("=" * 60)
+    
+    try:
+        import bot
+        print("✅ bot.py imported successfully")
+        return True
+    except Exception as e:
+        print(f"❌ Bot import error: {e}")
+        return False
+
+def main():
+    """Run all tests"""
+    print("🔧 FINAL VERIFICATION TEST")
+    print("Testing fixes for:")
+    print("1. Undefined log_memory_usage function")
+    print("2. Common English words being validated as player names")
+    print()
+    
+    test1_passed = test_log_memory_usage()
+    test2_passed = test_validation_fix()
+    test3_passed = test_bot_import()
+    
+    print("\n" + "=" * 60)
+    print("FINAL RESULTS")
+    print("=" * 60)
+    
+    if test1_passed and test2_passed and test3_passed:
+        print("🎉 ALL TESTS PASSED!")
+        print("✅ log_memory_usage function is working")
+        print("✅ Validation fix is working")
+        print("✅ Bot imports successfully")
+        print("\n🚀 Both critical issues have been resolved!")
+        return True
     else:
-        print("   ✅ QUERY WOULD BE BLOCKED (this is correct)")
-        
-except Exception as e:
-    print(f"   ERROR: {e}")
+        print("❌ SOME TESTS FAILED!")
+        if not test1_passed:
+            print("❌ log_memory_usage function issue")
+        if not test2_passed:
+            print("❌ Validation fix issue")
+        if not test3_passed:
+            print("❌ Bot import issue")
+        return False
 
-print(f"\n🔧 EXPECTED BEHAVIOR:")
-print(f"   - Should find both Suarez and Chapman players")
-print(f"   - Should detect multiple different last names")
-print(f"   - Should detect multi-player keywords ('and')")
-print(f"   - Should BLOCK the query as true multi-player")
+if __name__ == "__main__":
+    success = main()
+    sys.exit(0 if success else 1)

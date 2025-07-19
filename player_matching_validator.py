@@ -358,11 +358,95 @@ def validate_player_mention_in_text(text, player_name, context=None):
     
     log_info(f"MENTION VALIDATION: Checking if '{text}' mentions '{player_name}' (context: {context})")
     
-    # For mention validation, we're much more permissive
-    # We just need to verify the player name appears reasonably in the text
+    # 🔧 CRITICAL BUG FIX: Prevent common English words from being validated as player names
+    # This was causing words like "should", "bail", "early" to be treated as player names
     
     text_normalized = normalize_name(text).lower()
     player_normalized = normalize_name(player_name).lower()
+    
+    # 🔧 CRITICAL FIX: Filter out obvious non-player names before any validation
+    # Common English words that should never be treated as player names
+    common_english_words = {
+        'should', 'would', 'could', 'might', 'will', 'shall', 'can', 'may', 'must',
+        'have', 'has', 'had', 'haven', 'hasn', 'hadn', 'do', 'does', 'did', 'don', 'doesn', 'didn',
+        'am', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
+        'get', 'got', 'getting', 'go', 'going', 'went', 'gone', 'come', 'coming', 'came',
+        'see', 'seeing', 'saw', 'seen', 'look', 'looking', 'looked', 'find', 'finding', 'found',
+        'take', 'taking', 'took', 'taken', 'give', 'giving', 'gave', 'given', 'make', 'making', 'made',
+        'put', 'putting', 'say', 'saying', 'said', 'tell', 'telling', 'told', 'ask', 'asking', 'asked',
+        'know', 'knowing', 'knew', 'known', 'think', 'thinking', 'thought', 'feel', 'feeling', 'felt',
+        'want', 'wanting', 'wanted', 'need', 'needing', 'needed', 'like', 'liking', 'liked',
+        'love', 'loving', 'loved', 'help', 'helping', 'helped', 'try', 'trying', 'tried',
+        'work', 'working', 'worked', 'play', 'playing', 'played', 'run', 'running', 'ran',
+        'walk', 'walking', 'walked', 'talk', 'talking', 'talked', 'move', 'moving', 'moved',
+        'turn', 'turning', 'turned', 'start', 'starting', 'started', 'stop', 'stopping', 'stopped',
+        'end', 'ending', 'ended', 'begin', 'beginning', 'began', 'begun', 'keep', 'keeping', 'kept',
+        'hold', 'holding', 'held', 'bring', 'bringing', 'brought', 'carry', 'carrying', 'carried',
+        'send', 'sending', 'sent', 'show', 'showing', 'showed', 'shown', 'hear', 'hearing', 'heard',
+        'listen', 'listening', 'listened', 'read', 'reading', 'write', 'writing', 'wrote', 'written',
+        'learn', 'learning', 'learned', 'teach', 'teaching', 'taught', 'study', 'studying', 'studied',
+        'understand', 'understanding', 'understood', 'remember', 'remembering', 'remembered',
+        'forget', 'forgetting', 'forgot', 'forgotten', 'believe', 'believing', 'believed',
+        'hope', 'hoping', 'hoped', 'wish', 'wishing', 'wished', 'expect', 'expecting', 'expected',
+        'wait', 'waiting', 'waited', 'stay', 'staying', 'stayed', 'leave', 'leaving', 'left',
+        'arrive', 'arriving', 'arrived', 'return', 'returning', 'returned', 'visit', 'visiting', 'visited',
+        'meet', 'meeting', 'met', 'join', 'joining', 'joined', 'follow', 'following', 'followed',
+        'lead', 'leading', 'led', 'win', 'winning', 'won', 'lose', 'losing', 'lost',
+        'beat', 'beating', 'fight', 'fighting', 'fought', 'kill', 'killing', 'killed',
+        'die', 'dying', 'died', 'live', 'living', 'lived', 'eat', 'eating', 'ate', 'eaten',
+        'drink', 'drinking', 'drank', 'drunk', 'sleep', 'sleeping', 'slept', 'wake', 'waking', 'woke', 'woken',
+        'sit', 'sitting', 'sat', 'stand', 'standing', 'stood', 'lie', 'lying', 'lay', 'lain',
+        'fall', 'falling', 'fell', 'fallen', 'rise', 'rising', 'rose', 'risen', 'fly', 'flying', 'flew', 'flown',
+        'drive', 'driving', 'drove', 'driven', 'ride', 'riding', 'rode', 'ridden', 'swim', 'swimming', 'swam', 'swum',
+        'jump', 'jumping', 'jumped', 'climb', 'climbing', 'climbed', 'throw', 'throwing', 'threw', 'thrown',
+        'catch', 'catching', 'caught', 'hit', 'hitting', 'kick', 'kicking', 'kicked',
+        'push', 'pushing', 'pushed', 'pull', 'pulling', 'pulled', 'lift', 'lifting', 'lifted',
+        'drop', 'dropping', 'dropped', 'pick', 'picking', 'picked', 'choose', 'choosing', 'chose', 'chosen',
+        'decide', 'deciding', 'decided', 'change', 'changing', 'changed', 'happen', 'happening', 'happened',
+        'become', 'becoming', 'became', 'seem', 'seeming', 'seemed', 'appear', 'appearing', 'appeared',
+        'open', 'opening', 'opened', 'close', 'closing', 'closed', 'break', 'breaking', 'broke', 'broken',
+        'fix', 'fixing', 'fixed', 'build', 'building', 'built', 'create', 'creating', 'created',
+        'destroy', 'destroying', 'destroyed', 'clean', 'cleaning', 'cleaned', 'wash', 'washing', 'washed',
+        'cook', 'cooking', 'cooked', 'buy', 'buying', 'bought', 'sell', 'selling', 'sold',
+        'pay', 'paying', 'paid', 'cost', 'costing', 'spend', 'spending', 'spent',
+        'save', 'saving', 'saved', 'earn', 'earning', 'earned', 'own', 'owning', 'owned',
+        'use', 'using', 'used', 'wear', 'wearing', 'wore', 'worn', 'cut', 'cutting',
+        # Common words from the bug report
+        'bail', 'early', 'enough', 'that', 'tonight', 'posting', 'wrath', 'blocked', 'issue',
+        # Question words
+        'what', 'when', 'where', 'why', 'who', 'how', 'which', 'whose', 'whom',
+        # Pronouns and articles
+        'i', 'me', 'my', 'mine', 'we', 'us', 'our', 'ours', 'you', 'your', 'yours',
+        'he', 'him', 'his', 'she', 'her', 'hers', 'it', 'its', 'they', 'them', 'their', 'theirs',
+        'this', 'that', 'these', 'those', 'the', 'a', 'an',
+        # Prepositions and conjunctions
+        'and', 'or', 'but', 'if', 'then', 'when', 'where', 'why', 'how', 'because', 'since',
+        'to', 'of', 'in', 'on', 'at', 'by', 'for', 'with', 'without', 'about', 'above', 'below',
+        'over', 'under', 'up', 'down', 'out', 'off', 'away', 'back', 'here', 'there',
+        # Time words
+        'now', 'then', 'today', 'tomorrow', 'yesterday', 'always', 'never', 'sometimes',
+        'often', 'usually', 'rarely', 'soon', 'late', 'early', 'before', 'after',
+        # Quantity words
+        'more', 'less', 'most', 'least', 'much', 'many', 'few', 'some', 'any', 'all',
+        'every', 'each', 'both', 'either', 'neither', 'one', 'two', 'three', 'first', 'last',
+        # Quality words
+        'good', 'bad', 'better', 'worse', 'best', 'worst', 'nice', 'great', 'awesome',
+        'terrible', 'horrible', 'amazing', 'fantastic', 'perfect', 'awful', 'wonderful',
+        'excellent', 'outstanding', 'impressive', 'big', 'small', 'large', 'huge', 'tiny',
+        'long', 'short', 'tall', 'high', 'low', 'fast', 'slow', 'quick', 'easy', 'hard',
+        'difficult', 'simple', 'complex', 'new', 'old', 'young', 'fresh', 'clean', 'dirty'
+    }
+    
+    # If the player name is a common English word, reject it immediately
+    if player_normalized in common_english_words:
+        log_info(f"MENTION VALIDATION FAILED: '{player_name}' is a common English word, not a player name")
+        return False
+    
+    # Also check if it's a single common word (for cases like "should" vs "Should Martinez")
+    player_words = player_normalized.split()
+    if len(player_words) == 1 and player_words[0] in common_english_words:
+        log_info(f"MENTION VALIDATION FAILED: '{player_name}' is a single common English word, not a player name")
+        return False
     
     # 🔧 CRITICAL FIX: Split text on separators, not just spaces
     # This handles cases like "Soto;Edman;trout" properly
@@ -370,12 +454,15 @@ def validate_player_mention_in_text(text, player_name, context=None):
     text_words = re.split(r'[;\s,&/\(\)\[\]]+', text_normalized)
     text_words = [word for word in text_words if word]  # Remove empty strings
     
-    player_words = player_normalized.split()
-    
     # 🔧 CRITICAL FIX: Enhanced last name matching for compound names like "De La Cruz"
     # Extract the actual last name (last word) from player name
     if player_words:
         actual_last_name = player_words[-1]
+        
+        # 🔧 ADDITIONAL SAFETY: Don't validate if the "lastname" is a common word
+        if actual_last_name in common_english_words:
+            log_info(f"MENTION VALIDATION FAILED: Last name '{actual_last_name}' is a common English word")
+            return False
         
         # Check if the actual last name appears in the text
         if actual_last_name in text_words:
