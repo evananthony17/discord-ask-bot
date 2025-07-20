@@ -1524,148 +1524,40 @@ def simplified_fuzzy_match(text, max_results=8):
 
 def has_multi_player_keywords_enhanced(query):
     """
-    Enhanced version that returns both detection result AND suspicious segments.
+    SIMPLIFIED: Permissive multi-player detection that only blocks obvious cases.
     Returns: (has_keywords: bool, segments: list)
     """
     query_lower = query.lower()
     
-    # 🔧 CRITICAL FIX: Context-aware "or" detection
-    # Only treat "or" as multi-player if it's actually comparing players, not presenting options about one player
+    # 🔧 SIMPLIFIED: Only block on very obvious multi-player keywords
+    # Remove complex "or" logic and context-aware detection that causes oscillation
     
-    # Simple word-based keywords (always count except "or")
-    word_keywords = ['and', '&', 'vs', 'versus', 'with']
-    for keyword in word_keywords:
+    # Clear comparison keywords (always block these)
+    comparison_keywords = ['vs', 'versus']
+    for keyword in comparison_keywords:
         if f' {keyword} ' in f' {query_lower} ':
-            # Split on this keyword to get segments
             segments = [seg.strip() for seg in re.split(f'\\s+{re.escape(keyword)}\\s+', query, flags=re.IGNORECASE)]
             if len(segments) >= 2:
-                log_info(f"INTENT DETECTION: Found '{keyword}' keyword, segments: {segments}")
+                log_info(f"SIMPLIFIED INTENT: Found comparison keyword '{keyword}', segments: {segments}")
                 return True, segments
     
-    # 🔧 SPECIAL HANDLING FOR "OR": Context-aware detection
-    if ' or ' in f' {query_lower} ':
-        # Split on "or" to get segments
-        segments = [seg.strip() for seg in re.split(r'\s+or\s+', query, flags=re.IGNORECASE)]
-        if len(segments) >= 2:
-            # Check if this is a true multi-player comparison vs single-player options
-            
-            # Patterns that indicate single-player with options (NOT multi-player)
-            single_player_patterns = [
-                # Decision patterns about one player
-                r'should\s+(we|i)\s+(bail|drop|sit|bench|start)',
-                r'is\s+(he|she|it)\s+(playing|sitting|starting)',
-                r'(is\s+it|are\s+we)\s+(early|late|too)',
-                r'should\s+(i|we)\s+(start|bench|sit)',
-                # Timing/status patterns
-                r'(early|late)\s+enough',
-                r'(too\s+)?(early|late)',
-                r'(playing|sitting)\s+(today|tonight|tomorrow)',
-                # Pronoun references (indicates same player)
-                r'\b(he|she|it|him|her)\b',
-            ]
-            
-            # Check if any single-player patterns match
-            for pattern in single_player_patterns:
-                if re.search(pattern, query_lower):
-                    log_info(f"INTENT DETECTION: Found 'or' but detected single-player pattern: {pattern}")
-                    log_info(f"INTENT DETECTION: Treating as single-player question, not multi-player")
-                    return False, []
-            
-            # If no single-player patterns, check if segments look like player comparisons
-            # True multi-player patterns
-            multi_player_patterns = [
-                r'(who\s+is\s+better|which\s+is\s+better)',
-                r'(soto|judge|ohtani|trout|acuna|betts)',  # Common player names in comparisons
-                r'(start\s+\w+\s+or\s+\w+)',  # "start X or Y"
-                r'(\w+\s+or\s+\w+\s+for)',  # "X or Y for tonight"
-            ]
-            
-            # Check if this looks like a true multi-player comparison
-            for pattern in multi_player_patterns:
-                if re.search(pattern, query_lower):
-                    log_info(f"INTENT DETECTION: Found 'or' with multi-player pattern: {pattern}")
-                    log_info(f"INTENT DETECTION: Found 'or' keyword, segments: {segments}")
-                    return True, segments
-            
-            # Default: if "or" found but no clear patterns, be conservative and don't trigger
-            log_info(f"INTENT DETECTION: Found 'or' but no clear multi-player or single-player patterns")
-            log_info(f"INTENT DETECTION: Being conservative, treating as potential single-player")
-            return False, []
+    # 🔧 PERMISSIVE: Remove "or" detection entirely - too many false positives
+    # Users asking "should I start X or Y" are usually asking about one decision, not comparing players
     
-    # Context-aware separator detection with segment extraction
-    
-    # 🔧 CRITICAL FIX: Much stricter comma detection to prevent false positives
-    # Check for comma separation (like "Soto, Harper, Trout") but NOT natural language commas
-    if ',' in query:
-        comma_segments = [seg.strip() for seg in query.split(',')]
-        if len(comma_segments) >= 2:
-            # 🔧 ENHANCED: Much stricter criteria for comma-based multi-player detection
-            player_like_segments = 0
-            natural_language_indicators = 0
-            
-            for segment in comma_segments:
-                segment_clean = segment.lower().strip()
-                segment_words = segment_clean.split()
-                
-                # Check for natural language patterns that indicate this is NOT multi-player
-                natural_language_patterns = [
-                    # Question patterns
-                    'what', 'how', 'when', 'where', 'why', 'who', 'which',
-                    # Commentary patterns  
-                    'i', 'me', 'my', 'we', 'us', 'our', 'you', 'your', 'he', 'she', 'it', 'they', 'them', 'their',
-                    # Verb patterns
-                    'have', 'has', 'had', 'haven', 'hasn', 'hadn', 'been', 'being', 'am', 'is', 'are', 'was', 'were',
-                    'do', 'does', 'did', 'don', 'doesn', 'didn', 'will', 'would', 'could', 'should', 'can', 'may',
-                    'went', 'go', 'going', 'come', 'coming', 'get', 'getting', 'look', 'looking', 'see', 'seeing',
-                    # Context patterns
-                    'paying', 'attention', 'recently', 'lately', 'watching', 'following', 'tracking', 'monitoring',
-                    'update', 'last', 'next', 'this', 'that', 'the', 'a', 'an',
-                    # Fantasy patterns
-                    'path', 'gold', 'diamond', 'silver', 'bronze', 'like', 'looking'
-                ]
-                
-                # Count natural language indicators
-                if segment_words:
-                    for word in segment_words:
-                        if word in natural_language_patterns:
-                            natural_language_indicators += 1
-                            break  # Only count once per segment
-                
-                # 🔧 STRICTER: Only count as player-like if it looks like a simple name
-                # Must be 1-3 words, mostly alphabetic, no obvious question/commentary words
-                if (len(segment_words) >= 1 and len(segment_words) <= 3 and
-                    all(word.isalpha() and len(word) >= 2 for word in segment_words) and
-                    not any(word in natural_language_patterns for word in segment_words)):
-                    player_like_segments += 1
-            
-            # 🔧 CRITICAL: Only trigger if we have multiple player-like segments AND minimal natural language
-            # This prevents "seth lugo went +2 to 78 last update, what's the path to gold looking like?" from triggering
-            if player_like_segments >= 2 and natural_language_indicators <= 1:
-                log_info(f"INTENT DETECTION: Found comma separation with {player_like_segments} player-like segments and {natural_language_indicators} natural language indicators")
-                return True, comma_segments
-            else:
-                log_info(f"INTENT DETECTION: Comma found but rejected - {player_like_segments} player-like segments, {natural_language_indicators} natural language indicators")
-    
-    # Check for semicolon separation (like "Soto;Harper;Trout")
+    # 🔧 PERMISSIVE: Only block obvious semicolon lists (4+ segments)
     if ';' in query:
         semicolon_segments = [seg.strip() for seg in query.split(';')]
-        if len(semicolon_segments) >= 2:
+        if len(semicolon_segments) >= 4:  # Require 4+ segments to be very permissive
             name_like_segments = sum(1 for seg in semicolon_segments 
                                    if seg and any(word.isalpha() and len(word) >= 3 for word in seg.split()))
-            if name_like_segments >= 2:
-                log_info(f"INTENT DETECTION: Found semicolon separation with {name_like_segments} name-like segments")
+            if name_like_segments >= 4:  # Require 4+ name-like segments
+                log_info(f"SIMPLIFIED INTENT: Found obvious semicolon list with {name_like_segments} name-like segments")
                 return True, semicolon_segments
     
-    # Check for slash separation (like "Soto/Harper/Trout")
-    if '/' in query:
-        slash_segments = [seg.strip() for seg in query.split('/')]
-        if len(slash_segments) >= 2:
-            name_like_segments = sum(1 for seg in slash_segments 
-                                   if seg and any(word.isalpha() and len(word) >= 3 for word in seg.split()))
-            if name_like_segments >= 2:
-                log_info(f"INTENT DETECTION: Found slash separation with {name_like_segments} name-like segments")
-                return True, slash_segments
+    # 🔧 REMOVED: Complex comma detection, slash detection, bracket detection
+    # These were causing too many false positives
     
+    log_info(f"SIMPLIFIED INTENT: No clear multi-player intent detected for: '{query}'")
     return False, []
 
 def validate_suspicious_names_strict(query, suspicious_segments):
@@ -1967,8 +1859,15 @@ def simplified_player_detection(text):
     # No matches found
     logger.info(f"🎯 SIMPLIFIED_DETECTION: No matches found for '{text}'")
     duration_ms = int((datetime.now() - start_time).total_seconds() * 1000)
-    asyncio.create_task(log_analytics("Player Search",
-        question=text, duration_ms=duration_ms, players_checked=len(players_data),
-        matches_found=0, search_type="no_match"
-    ))
+    
+    # 🔧 FIX: Handle asyncio gracefully in test environments
+    try:
+        asyncio.create_task(log_analytics("Player Search",
+            question=text, duration_ms=duration_ms, players_checked=len(players_data),
+            matches_found=0, search_type="no_match"
+        ))
+    except RuntimeError:
+        # No event loop running (test environment) - skip analytics
+        pass
+    
     return None
