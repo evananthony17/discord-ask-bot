@@ -1025,10 +1025,14 @@ def check_player_mentioned_original(text, is_recursive_call=False):
     if exact_matches:
         log_info(f"EARLY EXIT: Found {len(exact_matches)} exact matches, stopping all processing")
         duration_ms = int((datetime.now() - start_time).total_seconds() * 1000)
-        asyncio.create_task(log_analytics("Player Search",
-            question=text, duration_ms=duration_ms, players_checked=len(players_data),
-            matches_found=len(exact_matches), players_found=exact_matches, search_type="exact_match_early_exit"
-        ))
+        try:
+            asyncio.create_task(log_analytics("Player Search",
+                question=text, duration_ms=duration_ms, players_checked=len(players_data),
+                matches_found=len(exact_matches), players_found=exact_matches, search_type="exact_match_early_exit"
+            ))
+        except RuntimeError:
+            # No event loop running (test environment) - skip analytics
+            pass
         return exact_matches
     
     # 🔧 NEW: Use existing multi-player detection logic
@@ -1466,8 +1470,7 @@ def check_player_mentioned(text):
 
 def simplified_fuzzy_match(text, max_results=8):
     """
-    Simplified fuzzy matching that doesn't call complex extraction logic.
-    Used by simplified_player_detection to avoid circular calls.
+    Enhanced fuzzy matching with suffix-aware logic for names like "Victor Scott" → "Victor Scott II"
     """
     logger.info(f"🎯 SIMPLIFIED_FUZZY: Starting for '{text}'")
     
@@ -1475,37 +1478,96 @@ def simplified_fuzzy_match(text, max_results=8):
         return []
     
     matches = []
+    text_normalized = normalize_name(text).lower()
+    
+    # Common name suffixes that should be handled specially
+    name_suffixes = ['jr', 'sr', 'ii', 'iii', 'iv', 'v']
     
     # Direct fuzzy matching against all players
     for player in players_data:
-        player_name = normalize_name(player['name'])
+        player_name = normalize_name(player['name']).lower()
         
-        # Calculate similarity
-        similarity = SequenceMatcher(None, text, player_name).ratio()
+        # STRATEGY 1: Direct similarity comparison
+        similarity = SequenceMatcher(None, text_normalized, player_name).ratio()
+        best_similarity = similarity
+        match_strategy = "direct"
         
-        # Get name parts for individual comparison
-        player_name_parts = player_name.split() if ' ' in player_name else [player_name]
+        # STRATEGY 2: Suffix-aware matching for multi-word queries
+        if ' ' in text_normalized and ' ' in player_name:
+            # Check if player name has a suffix
+            player_parts = player_name.split()
+            text_parts = text_normalized.split()
+            
+            # If player has a suffix, try matching without it
+            if len(player_parts) > 2 and player_parts[-1] in name_suffixes:
+                player_base_name = ' '.join(player_parts[:-1])  # Remove suffix
+                base_similarity = SequenceMatcher(None, text_normalized, player_base_name).ratio()
+                
+                if base_similarity > best_similarity:
+                    best_similarity = base_similarity
+                    match_strategy = f"suffix_aware_removed_{player_parts[-1]}"
+                    logger.info(f"🎯 SUFFIX_MATCH: '{text_normalized}' vs base '{player_base_name}' = {base_similarity:.3f}")
+            
+            # If query might be missing a suffix, try adding common ones
+            elif len(text_parts) >= 2:
+                for suffix in name_suffixes:
+                    text_with_suffix = f"{text_normalized} {suffix}"
+                    suffix_similarity = SequenceMatcher(None, text_with_suffix, player_name).ratio()
+                    
+                    if suffix_similarity > best_similarity:
+                        best_similarity = suffix_similarity
+                        match_strategy = f"suffix_aware_added_{suffix}"
+                        logger.info(f"🎯 SUFFIX_MATCH: '{text_with_suffix}' vs '{player_name}' = {suffix_similarity:.3f}")
         
-        # Compare against each name part individually
-        best_part_similarity = 0.0
-        for name_part in player_name_parts:
-            part_similarity = SequenceMatcher(None, text, name_part).ratio()
-            if part_similarity > best_part_similarity:
-                best_part_similarity = part_similarity
+        # STRATEGY 3: Individual name part comparison (for partial matches)
+        if ' ' in player_name:
+            player_name_parts = player_name.split()
+            for name_part in player_name_parts:
+                if len(name_part) >= 3:  # Skip very short parts and suffixes
+                    part_similarity = SequenceMatcher(None, text_normalized, name_part).ratio()
+                    if part_similarity > best_similarity:
+                        best_similarity = part_similarity
+                        match_strategy = f"name_part_{name_part}"
         
-        # Use the best similarity
-        best_similarity = max(similarity, best_part_similarity)
+        # STRATEGY 4: Substring matching for exact word matches
+        if ' ' in text_normalized:
+            text_words = text_normalized.split()
+            player_words = player_name.split()
+            
+            # Count exact word matches
+            exact_matches = 0
+            total_text_words = len(text_words)
+            
+            for text_word in text_words:
+                if len(text_word) >= 3:  # Only count meaningful words
+                    for player_word in player_words:
+                        if text_word == player_word:
+                            exact_matches += 1
+                            break
+            
+            if exact_matches > 0:
+                # Calculate similarity based on exact word matches
+                word_match_similarity = exact_matches / total_text_words
+                if word_match_similarity > best_similarity:
+                    best_similarity = word_match_similarity
+                    match_strategy = f"exact_words_{exact_matches}_{total_text_words}"
         
-        # Dynamic threshold
-        if ' ' in text:
-            # Multi-word queries need very high similarity
-            threshold = 0.95
+        # Dynamic threshold based on matching strategy and text complexity
+        if match_strategy.startswith("suffix_aware"):
+            # More lenient for suffix-aware matches
+            threshold = 0.85 if ' ' in text_normalized else 0.7
+        elif match_strategy.startswith("exact_words"):
+            # Very lenient for exact word matches
+            threshold = 0.5
+        elif ' ' in text_normalized:
+            # Standard threshold for multi-word queries
+            threshold = 0.90  # Lowered from 0.95
         else:
-            # Single word queries can be more lenient
+            # Single word queries
             threshold = 0.7
         
         if best_similarity >= threshold:
-            logger.info(f"🎯 SIMPLIFIED_FUZZY: '{text}' → {player['name']} ({player['team']}) = {best_similarity:.3f}")
+            logger.info(f"🎯 SIMPLIFIED_FUZZY: '{text}' → {player['name']} ({player['team']}) = {best_similarity:.3f} (strategy: {match_strategy})")
             matches.append((player, best_similarity))
     
     # Sort by score and remove duplicates
@@ -1850,10 +1912,14 @@ def simplified_player_detection(text):
         
         if validated_matches:
             duration_ms = int((datetime.now() - start_time).total_seconds() * 1000)
-            asyncio.create_task(log_analytics("Player Search",
-                question=text, duration_ms=duration_ms, players_checked=len(players_data),
-                matches_found=len(validated_matches), players_found=validated_matches, search_type="filtered_detection"
-            ))
+            try:
+                asyncio.create_task(log_analytics("Player Search",
+                    question=text, duration_ms=duration_ms, players_checked=len(players_data),
+                    matches_found=len(validated_matches), players_found=validated_matches, search_type="filtered_detection"
+                ))
+            except RuntimeError:
+                # No event loop running (test environment) - skip analytics
+                pass
             return validated_matches
     
     # No matches found
