@@ -8,7 +8,99 @@ import uuid
 import time
 import os
 from datetime import datetime, timedelta
+from collections import defaultdict
 from question_map_store import load_question_map, save_question_map, append_question
+
+# ========== EMERGENCY IP BAN PREVENTION ==========
+# CRITICAL: Universal rate limiting to prevent Discord IP bans
+
+class UniversalRateLimiter:
+    """
+    CRITICAL: Prevents Discord IP bans by rate limiting ALL Discord operations
+    """
+    def __init__(self):
+        self.calls = defaultdict(list)
+        self.max_calls_per_minute = 10  # Very conservative limit
+        self.max_calls_per_hour = 100   # Hourly limit
+        self.cooldown_duration = 60     # Seconds
+        self.emergency_mode = False
+        
+    def can_proceed(self, operation="general"):
+        """Check if operation can proceed without hitting rate limits"""
+        now = time.time()
+        
+        # Clean old calls
+        self.calls[operation] = [t for t in self.calls[operation] if now - t < 3600]  # Keep 1 hour
+        minute_calls = [t for t in self.calls[operation] if now - t < 60]  # Last minute
+        
+        # Check limits
+        if len(minute_calls) >= self.max_calls_per_minute:
+            print(f"🚨 RATE_LIMIT: {operation} blocked - {len(minute_calls)} calls in last minute")
+            return False
+            
+        if len(self.calls[operation]) >= self.max_calls_per_hour:
+            print(f"🚨 RATE_LIMIT: {operation} blocked - {len(self.calls[operation])} calls in last hour")
+            return False
+            
+        return True
+    
+    def record_call(self, operation="general"):
+        """Record an API call"""
+        self.calls[operation].append(time.time())
+    
+    def wait_if_needed(self, operation="general"):
+        """Wait if rate limit would be exceeded"""
+        if not self.can_proceed(operation):
+            print(f"🚨 EMERGENCY_WAIT: Waiting {self.cooldown_duration}s for {operation}")
+            time.sleep(self.cooldown_duration)
+        
+        self.record_call(operation)
+    
+    def enter_emergency_mode(self):
+        """Enter emergency mode with extreme rate limiting"""
+        self.emergency_mode = True
+        self.max_calls_per_minute = 3  # Extremely conservative
+        self.max_calls_per_hour = 30
+        self.cooldown_duration = 120   # 2 minute waits
+        print("🚨 ENTERING EMERGENCY MODE: Extreme rate limiting activated")
+
+# Global rate limiter instance
+rate_limiter = UniversalRateLimiter()
+
+# EMERGENCY: Disable features that cause API abuse
+EMERGENCY_MODE = True  # Start in emergency mode after IP ban
+
+if EMERGENCY_MODE:
+    print("🚨 STARTING IN EMERGENCY MODE: Limited functionality to prevent IP ban")
+    rate_limiter.enter_emergency_mode()
+
+def safe_discord_operation(operation_name):
+    """Decorator to make Discord operations safe"""
+    def decorator(func):
+        async def wrapper(*args, **kwargs):
+            try:
+                # Rate limit check
+                rate_limiter.wait_if_needed(operation_name)
+                
+                # Execute operation
+                result = await func(*args, **kwargs)
+                return result
+                
+            except discord.HTTPException as e:
+                if e.status == 429:
+                    print(f"🚨 429_ERROR: Rate limited on {operation_name}, entering emergency mode")
+                    rate_limiter.enter_emergency_mode()
+                    # Wait longer and retry once
+                    await asyncio.sleep(300)  # 5 minute cooldown
+                    return await func(*args, **kwargs)
+                else:
+                    print(f"❌ DISCORD_ERROR: {operation_name} failed with status {e.status}")
+                    raise
+            except Exception as e:
+                print(f"❌ OPERATION_ERROR: {operation_name} failed: {e}")
+                raise
+        return wrapper
+    return decorator
 
 # Set up flow tracing logger
 logger = logging.getLogger(__name__)
@@ -76,13 +168,18 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 
 # -------- EVENTS --------
 @bot.event
+@safe_discord_operation("bot_startup")
 async def on_ready():
     # Original startup logic (KEEP THIS!)
     print(f"✅ Logged in as {bot.user}")
     start_batching()  # Start batching logs
     
-    await log_analytics("Bot Health", event="startup", bot_name=str(bot.user), 
-                        total_questions=0, blocked_questions=0, error_count=0)
+    # EMERGENCY: Disable analytics in emergency mode to prevent webhook abuse
+    if not EMERGENCY_MODE:
+        await log_analytics("Bot Health", event="startup", bot_name=str(bot.user), 
+                            total_questions=0, blocked_questions=0, error_count=0)
+    else:
+        print("🚨 EMERGENCY_MODE: Skipping startup analytics to prevent webhook abuse")
     
     # Load data (CRITICAL - this was missing!)
     banned_categories["profanity"]["words"] = load_words_from_json("profanity.json")
