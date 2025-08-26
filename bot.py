@@ -170,42 +170,98 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 @bot.event
 @safe_discord_operation("bot_startup")
 async def on_ready():
-    # Original startup logic (KEEP THIS!)
-    print(f"✅ Logged in as {bot.user}")
-    start_batching()  # Start batching logs
-    
-    # EMERGENCY: Disable analytics in emergency mode to prevent webhook abuse
-    if not EMERGENCY_MODE:
-        await log_analytics("Bot Health", event="startup", bot_name=str(bot.user), 
-                            total_questions=0, blocked_questions=0, error_count=0)
-    else:
-        print("🚨 EMERGENCY_MODE: Skipping startup analytics to prevent webhook abuse")
-    
-    # Load data (CRITICAL - this was missing!)
-    banned_categories["profanity"]["words"] = load_words_from_json("profanity.json")
-    players_loaded = load_players_from_json("players.json")
-    log_info(f"STARTUP: Player list loaded: {len(players_loaded)} players")
-    
-    # CRITICAL FIX: Verify all modules have the loaded player data
-    import utils
-    import player_matching
-    log_info(f"STARTUP: Verifying player data - bot.py has {len(players_data)} players")
-    log_info(f"STARTUP: Verifying player data - utils has {len(utils.players_data)} players")
-    log_info(f"STARTUP: Verifying player data - player_matching has {len(player_matching.players_data)} players")
-    
-    # All modules should already have the data since they import the same list from config
-    if len(players_data) != len(players_loaded):
-        log_error(f"STARTUP ERROR: players_data length mismatch - expected {len(players_loaded)}, got {len(players_data)}")
-    else:
-        log_info(f"STARTUP: All modules successfully have {len(players_data)} players loaded")
-    
-    load_nicknames_from_json("nicknames.json")
-    log_success("Bot is ready and listening for messages!")
-    
-    # NEW: Add cleanup feature
-    log_info("BOT READY: Cleaning up orphaned disambiguation messages")
-    pending_selections.clear()
-
+    """Enhanced startup with comprehensive error handling and verification"""
+    try:
+        print(f"✅ Bot logged in as {bot.user}")
+        
+        # CRITICAL: Start batching first
+        start_batching()
+        log_info("STARTUP: Log batching started")
+        
+        # CRITICAL: Load player data with comprehensive error handling
+        log_info("STARTUP: Beginning player data loading...")
+        
+        try:
+            # Load profanity words
+            log_info("STARTUP: Loading profanity words...")
+            profanity_words = load_words_from_json("profanity.json")
+            banned_categories["profanity"]["words"] = profanity_words
+            log_info(f"STARTUP: Loaded {len(profanity_words)} profanity words")
+            
+            # Load players with detailed logging
+            log_info("STARTUP: Loading players from JSON...")
+            players_loaded = load_players_from_json("players.json")
+            log_info(f"STARTUP: load_players_from_json returned {len(players_loaded)} players")
+            
+            # CRITICAL: Verify the global players_data was updated
+            log_info(f"STARTUP: Checking global players_data length: {len(players_data)}")
+            
+            if len(players_data) == 0:
+                log_error("CRITICAL STARTUP ERROR: players_data is empty after loading!")
+                log_error("STARTUP: Attempting emergency player data fix...")
+                
+                # Emergency fix: directly extend the global list
+                players_data.extend(players_loaded)
+                log_info(f"STARTUP: Emergency fix applied, players_data now has {len(players_data)} players")
+            
+            # Verify all modules have the data
+            import utils
+            import player_matching
+            log_info(f"STARTUP: Verification - bot.py players_data: {len(players_data)}")
+            log_info(f"STARTUP: Verification - utils.players_data: {len(utils.players_data)}")
+            log_info(f"STARTUP: Verification - player_matching.players_data: {len(player_matching.players_data)}")
+            
+            # Check if they're the same object (they should be)
+            log_info(f"STARTUP: Object identity check - same object: {players_data is utils.players_data}")
+            
+            if len(players_data) != len(players_loaded):
+                log_error(f"STARTUP ERROR: Length mismatch - loaded {len(players_loaded)}, have {len(players_data)}")
+            else:
+                log_success(f"STARTUP: Successfully loaded {len(players_data)} players")
+            
+            # Load nicknames
+            log_info("STARTUP: Loading nicknames...")
+            load_nicknames_from_json("nicknames.json")
+            log_info("STARTUP: Nicknames loaded successfully")
+            
+        except Exception as e:
+            log_error(f"CRITICAL STARTUP ERROR in data loading: {e}")
+            import traceback
+            log_error(f"STARTUP ERROR TRACEBACK: {traceback.format_exc()}")
+            # Don't return - continue with startup even if data loading fails
+        
+        # Analytics (with emergency mode check)
+        try:
+            if not EMERGENCY_MODE:
+                await log_analytics("Bot Health", event="startup", bot_name=str(bot.user), 
+                                    total_questions=0, blocked_questions=0, error_count=0)
+                log_info("STARTUP: Analytics logged successfully")
+            else:
+                log_info("STARTUP: Skipping analytics due to emergency mode")
+        except Exception as e:
+            log_error(f"STARTUP: Analytics failed: {e}")
+        
+        # Final verification
+        log_info("STARTUP: Performing final verification...")
+        if len(players_data) > 0:
+            log_success(f"STARTUP COMPLETE: Bot ready with {len(players_data)} players loaded")
+            print(f"🎉 STARTUP SUCCESS: {len(players_data)} players loaded and verified")
+        else:
+            log_error("STARTUP WARNING: Bot started but no player data available")
+            print("⚠️ STARTUP WARNING: No player data loaded")
+        
+        # Cleanup
+        log_info("STARTUP: Cleaning up orphaned disambiguation messages")
+        pending_selections.clear()
+        
+        log_success("Bot startup sequence completed!")
+        
+    except Exception as e:
+        log_error(f"CRITICAL STARTUP FAILURE: {e}")
+        import traceback
+        log_error(f"STARTUP FAILURE TRACEBACK: {traceback.format_exc()}")
+        print(f"💥 STARTUP FAILED: {e}")
+        # Don't re-raise - let the bot continue even with startup issues
 @bot.event  
 async def on_message(message):
     if message.author.bot:
@@ -325,6 +381,36 @@ async def on_message(message):
     await bot.process_commands(message)
 
 # -------- COMMAND: !ask --------
+
+def emergency_load_players():
+    """Emergency function to load players if startup failed"""
+    try:
+        from utils import load_players_from_json
+        from config import players_data
+        
+        if len(players_data) == 0:
+            print("🚨 EMERGENCY: Loading players due to empty players_data")
+            players_loaded = load_players_from_json("players.json")
+            
+            if len(players_data) == 0 and len(players_loaded) > 0:
+                # Direct extension as emergency measure
+                players_data.extend(players_loaded)
+                print(f"🚨 EMERGENCY: Loaded {len(players_data)} players")
+                return True
+            elif len(players_data) > 0:
+                print(f"✅ EMERGENCY: players_data already has {len(players_data)} players")
+                return True
+            else:
+                print("❌ EMERGENCY: Failed to load any players")
+                return False
+        else:
+            print(f"✅ EMERGENCY: players_data already has {len(players_data)} players")
+            return True
+            
+    except Exception as e:
+        print(f"❌ EMERGENCY LOADER FAILED: {e}")
+        return False
+
 @bot.command(name="ask")
 async def ask_question(ctx, *, question: str = None):
     # 🆔 REQUEST TRACKING: Generate unique request ID and start timing
@@ -379,6 +465,14 @@ async def ask_question(ctx, *, question: str = None):
             return
 
         # Check for player names
+        # EMERGENCY: Try to load players if they're missing
+        if not players_data:
+            logger.info(f"🚨 EMERGENCY [{request_id}]: players_data is empty, attempting emergency load")
+            if emergency_load_players():
+                logger.info(f"🚨 EMERGENCY [{request_id}]: Emergency load successful, continuing")
+            else:
+                logger.info(f"🚨 EMERGENCY [{request_id}]: Emergency load failed, showing error")
+        
         if not players_data:
             logger.info(f"🔴 FLOW_TRACE [{request_id}]: No player data available, exiting")
             error_msg = await ctx.send("Player database is not available. Please try again later.")
