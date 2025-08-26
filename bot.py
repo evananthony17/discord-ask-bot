@@ -186,6 +186,13 @@ async def on_ready():
     players_loaded = load_players_from_json("players.json")
     log_info(f"STARTUP: Player list loaded: {len(players_loaded)} players")
     
+    # CRITICAL FIX: Access the updated players_data from utils module
+    import utils
+    global players_data
+    players_data.clear()
+    players_data.extend(utils.players_data)
+    log_info(f"STARTUP: Updated bot.py players_data reference with {len(players_data)} players")
+    
     load_nicknames_from_json("nicknames.json")
     log_success("Bot is ready and listening for messages!")
     
