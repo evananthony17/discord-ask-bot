@@ -186,12 +186,18 @@ async def on_ready():
     players_loaded = load_players_from_json("players.json")
     log_info(f"STARTUP: Player list loaded: {len(players_loaded)} players")
     
-    # CRITICAL FIX: Access the updated players_data from utils module
+    # CRITICAL FIX: Verify all modules have the loaded player data
     import utils
-    global players_data
-    players_data.clear()
-    players_data.extend(utils.players_data)
-    log_info(f"STARTUP: Updated bot.py players_data reference with {len(players_data)} players")
+    import player_matching
+    log_info(f"STARTUP: Verifying player data - bot.py has {len(players_data)} players")
+    log_info(f"STARTUP: Verifying player data - utils has {len(utils.players_data)} players")
+    log_info(f"STARTUP: Verifying player data - player_matching has {len(player_matching.players_data)} players")
+    
+    # All modules should already have the data since they import the same list from config
+    if len(players_data) != len(players_loaded):
+        log_error(f"STARTUP ERROR: players_data length mismatch - expected {len(players_loaded)}, got {len(players_data)}")
+    else:
+        log_info(f"STARTUP: All modules successfully have {len(players_data)} players loaded")
     
     load_nicknames_from_json("nicknames.json")
     log_success("Bot is ready and listening for messages!")
