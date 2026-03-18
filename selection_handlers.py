@@ -191,18 +191,11 @@ async def handle_disambiguation_selection(reaction, user, selected_player, selec
     
     # 🔧 EXISTING: Check recent mentions for this specific player
     recent_mentions = await check_recent_player_mentions(reaction.message.guild, [selected_player])
-    
-    # DEBUG LOGGING - This will show us what's happening
-    log_info(f"🔧 DEBUG: recent_mentions returned: {recent_mentions}")
-    log_info(f"🔧 DEBUG: recent_mentions is truthy: {bool(recent_mentions)}")
-    log_info(f"🔧 DEBUG: Length of recent_mentions: {len(recent_mentions)}")
-    
+
     if recent_mentions:
-        log_info(f"🔧 DEBUG: Entering blocking logic")
         mention = recent_mentions[0]
         status = mention["status"]
         player_name = mention["player"]["name"]
-        log_info(f"🔧 DEBUG: Status is: {status}")
         
         log_info(f"🚫 Selected player {selected_player['name']} has recent mention with status: {status}")
         
@@ -215,13 +208,11 @@ async def handle_disambiguation_selection(reaction, user, selected_player, selec
                     error_msg = await reaction.message.channel.send(
                         f"**{player_name}** was answered recently: {answer_url}"
                     )
-                    log_info(f"🔧 SPECIFIC URL: Used specific answer URL for {player_name}")
-                else:
+                        else:
                     # Fallback to generic channel link
                     error_msg = await reaction.message.channel.send(
                         f"This player has been asked about recently. There is an answer here: {FINAL_ANSWER_LINK}"
                     )
-                    log_info(f"🔧 FALLBACK URL: Used generic channel link for {player_name}")
             else:  # pending
                 error_msg = await reaction.message.channel.send(
                     "This player has been asked about recently, please be patient and wait for an answer."
@@ -239,18 +230,14 @@ async def handle_disambiguation_selection(reaction, user, selected_player, selec
         except Exception as e:
             log_error(f"❌ Failed to delete original user message: {e}")
         
-        # ALWAYS return True when blocking, regardless of any exceptions above
-        log_info(f"🔧 DEBUG: Returning True (blocked) for {selected_player['name']}")
         return True  # Blocked
     else:
-        log_info(f"🔧 DEBUG: No recent mentions found, proceeding with question")
         # No recent mentions - proceed with the question, adding selected player info
         log_info(f"✅ Selected player {selected_player['name']} has no recent mentions - proceeding with question")
         
         # Append selected player info to make it clear which player they meant
         modified_question = f"{selection_data['original_question']} ({selected_player['name']} - {selected_player['team']})"
-        log_info(f"🔧 Modified question: {modified_question}")
-        
+
         await process_approved_question(
             reaction.message.channel,
             user,
@@ -259,7 +246,6 @@ async def handle_disambiguation_selection(reaction, user, selected_player, selec
             question_map
         )
         
-        log_info(f"🔧 DEBUG: Returning False (not blocked) for {selected_player['name']}")
         return False  # Not blocked, processed
 
 async def handle_block_selection(reaction, user, selected_player, selection_data):

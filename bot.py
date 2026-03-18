@@ -6,134 +6,12 @@ import asyncio
 import logging
 import uuid
 import time
-import os
-from datetime import datetime, timedelta
-from collections import defaultdict
 from question_map_store import load_question_map, save_question_map, append_question
 
-# ========== EMERGENCY IP BAN PREVENTION ==========
-# CRITICAL: Universal rate limiting to prevent Discord IP bans
-
-class UniversalRateLimiter:
-    """
-    CRITICAL: Prevents Discord IP bans by rate limiting ALL Discord operations
-    """
-    def __init__(self):
-        self.calls = defaultdict(list)
-        self.max_calls_per_minute = 10  # Very conservative limit
-        self.max_calls_per_hour = 100   # Hourly limit
-        self.cooldown_duration = 60     # Seconds
-        self.emergency_mode = False
-        
-    def can_proceed(self, operation="general"):
-        """Check if operation can proceed without hitting rate limits"""
-        now = time.time()
-        
-        # Clean old calls
-        self.calls[operation] = [t for t in self.calls[operation] if now - t < 3600]  # Keep 1 hour
-        minute_calls = [t for t in self.calls[operation] if now - t < 60]  # Last minute
-        
-        # Check limits
-        if len(minute_calls) >= self.max_calls_per_minute:
-            print(f"🚨 RATE_LIMIT: {operation} blocked - {len(minute_calls)} calls in last minute")
-            return False
-            
-        if len(self.calls[operation]) >= self.max_calls_per_hour:
-            print(f"🚨 RATE_LIMIT: {operation} blocked - {len(self.calls[operation])} calls in last hour")
-            return False
-            
-        return True
-    
-    def record_call(self, operation="general"):
-        """Record an API call"""
-        self.calls[operation].append(time.time())
-    
-    def wait_if_needed(self, operation="general"):
-        """Wait if rate limit would be exceeded"""
-        if not self.can_proceed(operation):
-            print(f"🚨 EMERGENCY_WAIT: Waiting {self.cooldown_duration}s for {operation}")
-            time.sleep(self.cooldown_duration)
-        
-        self.record_call(operation)
-    
-    def enter_emergency_mode(self):
-        """Enter emergency mode with extreme rate limiting"""
-        self.emergency_mode = True
-        self.max_calls_per_minute = 3  # Extremely conservative
-        self.max_calls_per_hour = 30
-        self.cooldown_duration = 120   # 2 minute waits
-        print("🚨 ENTERING EMERGENCY MODE: Extreme rate limiting activated")
-
-# Global rate limiter instance
-rate_limiter = UniversalRateLimiter()
-
-# EMERGENCY: Disable features that cause API abuse
-EMERGENCY_MODE = True  # Start in emergency mode after IP ban
-
-if EMERGENCY_MODE:
-    print("🚨 STARTING IN EMERGENCY MODE: Limited functionality to prevent IP ban")
-    rate_limiter.enter_emergency_mode()
-
-def safe_discord_operation(operation_name):
-    """Decorator to make Discord operations safe"""
-    def decorator(func):
-        async def wrapper(*args, **kwargs):
-            try:
-                # Rate limit check
-                rate_limiter.wait_if_needed(operation_name)
-                
-                # Execute operation
-                result = await func(*args, **kwargs)
-                return result
-                
-            except discord.HTTPException as e:
-                if e.status == 429:
-                    print(f"🚨 429_ERROR: Rate limited on {operation_name}, entering emergency mode")
-                    rate_limiter.enter_emergency_mode()
-                    # Wait longer and retry once
-                    await asyncio.sleep(300)  # 5 minute cooldown
-                    return await func(*args, **kwargs)
-                else:
-                    print(f"❌ DISCORD_ERROR: {operation_name} failed with status {e.status}")
-                    raise
-            except Exception as e:
-                print(f"❌ OPERATION_ERROR: {operation_name} failed: {e}")
-                raise
-        return wrapper
-    return decorator
 
 # Set up flow tracing logger
 logger = logging.getLogger(__name__)
 
-# -------- SIMPLE RESOURCE MONITORING --------
-def log_resource_usage(stage, request_id=None):
-    """Log resource usage checkpoint using built-in modules"""
-    try:
-        import gc
-        import sys
-        
-        # Get object count as a proxy for memory usage
-        obj_count = len(gc.get_objects())
-        # Get reference count for tracking potential memory leaks
-        ref_count = sys.gettotalrefcount() if hasattr(sys, 'gettotalrefcount') else 'N/A'
-        
-        if request_id:
-            logger.info(f"📊 RESOURCE_TRACE [{request_id}]: {stage} - Objects: {obj_count}, Refs: {ref_count}")
-        else:
-            logger.info(f"📊 RESOURCE_TRACE: {stage} - Objects: {obj_count}, Refs: {ref_count}")
-    except Exception as e:
-        if request_id:
-            logger.warning(f"📊 RESOURCE_TRACE [{request_id}]: Could not get resource usage for {stage}: {e}")
-        else:
-            logger.warning(f"📊 RESOURCE_TRACE: Could not get resource usage for {stage}: {e}")
-
-# -------- STAGE MONITORING UTILITY --------
-def log_stage_info(stage, request_id=None):
-    """Log processing stage for debugging (no external dependencies)"""
-    if request_id:
-        logger.info(f"📍 STAGE_TRACE [{request_id}]: {stage}")
-    else:
-        logger.info(f"� STAGE_TRACE: {stage}")
 
 # Import all our modules
 from config import (
@@ -141,10 +19,10 @@ from config import (
     FINAL_ANSWER_LINK, PRE_SELECTION_DELAY, REACTIONS, 
     banned_categories, pending_selections, timeout_tasks, players_data
 )
-from logging_system import log_info, log_error, log_success, log_analytics, start_batching, log_memory_usage
+from logging_system import log_info, log_error, log_success, log_analytics, start_batching
 from utils import load_words_from_json, load_players_from_json, load_nicknames_from_json, is_likely_player_request, normalize_name
 from validation import validate_question
-from player_matching import check_player_mentioned, process_multi_player_query_fixed, has_multi_player_keywords, has_multi_player_keywords_enhanced, validate_suspicious_names_strict
+from player_matching import check_player_mentioned, has_multi_player_keywords_enhanced, validate_suspicious_names_strict
 from recent_mentions import check_recent_player_mentions, check_fallback_recent_mentions
 from selection_handlers import start_selection_timeout, cancel_selection_timeout, handle_disambiguation_selection, handle_block_selection, cleanup_invalid_selection
 from bot_logic import process_approved_question, get_potential_player_words, handle_multi_player_question, handle_single_player_question, schedule_answered_message_cleanup
@@ -168,7 +46,6 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 
 # -------- EVENTS --------
 @bot.event
-@safe_discord_operation("bot_startup")
 async def on_ready():
     """Enhanced startup with comprehensive error handling and verification"""
     try:
@@ -229,17 +106,6 @@ async def on_ready():
             import traceback
             log_error(f"STARTUP ERROR TRACEBACK: {traceback.format_exc()}")
             # Don't return - continue with startup even if data loading fails
-        
-        # Analytics (with emergency mode check)
-        try:
-            if not EMERGENCY_MODE:
-                await log_analytics("Bot Health", event="startup", bot_name=str(bot.user), 
-                                    total_questions=0, blocked_questions=0, error_count=0)
-                log_info("STARTUP: Analytics logged successfully")
-            else:
-                log_info("STARTUP: Skipping analytics due to emergency mode")
-        except Exception as e:
-            log_error(f"STARTUP: Analytics failed: {e}")
         
         # Final verification
         log_info("STARTUP: Performing final verification...")
@@ -382,68 +248,29 @@ async def on_message(message):
 
 # -------- COMMAND: !ask --------
 
-def emergency_load_players():
-    """Emergency function to load players if startup failed"""
-    try:
-        from utils import load_players_from_json
-        from config import players_data
-        
-        if len(players_data) == 0:
-            print("🚨 EMERGENCY: Loading players due to empty players_data")
-            players_loaded = load_players_from_json("players.json")
-            
-            if len(players_data) == 0 and len(players_loaded) > 0:
-                # Direct extension as emergency measure
-                players_data.extend(players_loaded)
-                print(f"🚨 EMERGENCY: Loaded {len(players_data)} players")
-                return True
-            elif len(players_data) > 0:
-                print(f"✅ EMERGENCY: players_data already has {len(players_data)} players")
-                return True
-            else:
-                print("❌ EMERGENCY: Failed to load any players")
-                return False
-        else:
-            print(f"✅ EMERGENCY: players_data already has {len(players_data)} players")
-            return True
-            
-    except Exception as e:
-        print(f"❌ EMERGENCY LOADER FAILED: {e}")
-        return False
 
 @bot.command(name="ask")
 async def ask_question(ctx, *, question: str = None):
-    # 🆔 REQUEST TRACKING: Generate unique request ID and start timing
     request_id = str(uuid.uuid4())[:8]
     start_time = time.time()
-    logger.info(f"🆔 REQUEST_TRACE: Starting request {request_id}")
-    logger.info(f"🔵 FLOW_TRACE [{request_id}]: Starting message processing for: '{question[:50] if question else 'None'}...'")
-    logger.info(f"🔍 DEBUG_TRACE [{request_id}]: Full question received: '{question}'")
-    logger.info(f"🔍 DEBUG_TRACE [{request_id}]: Question length: {len(question) if question else 0}")
-    logger.info(f"🔍 DEBUG_TRACE [{request_id}]: Original message content: '{ctx.message.content}'")
-    log_memory_usage("Request Start", request_id)
-    
+
     if ctx.channel.name != SUBMISSION_CHANNEL:
-        logger.info(f"🔴 FLOW_TRACE [{request_id}]: Wrong channel, exiting early")
         error_msg = await ctx.send(f"Please use this command in #{SUBMISSION_CHANNEL}")
         await error_msg.delete(delay=5)
         return
 
     if question is None:
-        logger.info(f"🔴 FLOW_TRACE [{request_id}]: No question provided, exiting early")
         error_msg = await ctx.send("Please provide a question. Usage: `!ask your question here`")
         await error_msg.delete(delay=5)
         return
 
     # DUPLICATE PREVENTION - Check if user is already being processed
     if ctx.author.id in processing_users:
-        logger.info(f"🔴 FLOW_TRACE [{request_id}]: Duplicate prevention triggered, exiting early")
         log_info(f"DUPLICATE PREVENTION: User {ctx.author.id} already being processed, ignoring duplicate")
         return
     
     # Add user to processing set
     processing_users.add(ctx.author.id)
-    logger.info(f"🟡 FLOW_TRACE [{request_id}]: Added user to processing set, continuing with validation")
     
     try:
         # Prevent duplicate processing - check if user already has pending selection
@@ -452,10 +279,8 @@ async def ask_question(ctx, *, question: str = None):
             return
 
         # Validate question through all checks
-        logger.info(f"🟡 FLOW_TRACE [{request_id}]: Starting question validation")
         is_valid, error_message, error_category = validate_question(question)
         if not is_valid:
-            logger.info(f"🔴 FLOW_TRACE [{request_id}]: Question validation failed: {error_category}")
             try:
                 await ctx.message.delete()
             except:
@@ -465,16 +290,7 @@ async def ask_question(ctx, *, question: str = None):
             return
 
         # Check for player names
-        # EMERGENCY: Try to load players if they're missing
         if not players_data:
-            logger.info(f"🚨 EMERGENCY [{request_id}]: players_data is empty, attempting emergency load")
-            if emergency_load_players():
-                logger.info(f"🚨 EMERGENCY [{request_id}]: Emergency load successful, continuing")
-            else:
-                logger.info(f"🚨 EMERGENCY [{request_id}]: Emergency load failed, showing error")
-        
-        if not players_data:
-            logger.info(f"🔴 FLOW_TRACE [{request_id}]: No player data available, exiting")
             error_msg = await ctx.send("Player database is not available. Please try again later.")
             await error_msg.delete(delay=5)
             try:
@@ -483,15 +299,10 @@ async def ask_question(ctx, *, question: str = None):
                 pass
             return
         
-        # 🔧 UNIFIED PLAYER DETECTION: Single call handles both intent detection and player matching
-        logger.info(f"🟡 FLOW_TRACE [{request_id}]: Starting unified player detection")
-        log_resource_usage("Before Player Detection", request_id)
-        
         matched_players = check_player_mentioned(question)
-        
+
         # Handle blocking result
         if matched_players == "BLOCKED":
-            logger.info(f"🚫 FLOW_TRACE [{request_id}]: Multi-player query blocked by unified detection")
             
             try:
                 await ctx.message.delete()
@@ -504,9 +315,6 @@ async def ask_question(ctx, *, question: str = None):
             )
             await error_msg.delete(delay=8)
             return
-        
-        logger.info(f"🟡 FLOW_TRACE [{request_id}]: Player detection completed, moving to decision logic")
-        log_resource_usage("After Player Detection", request_id)
         
         # Fallback check for potential player words - but respect validation
         fallback_recent_check = False
@@ -526,16 +334,8 @@ async def ask_question(ctx, *, question: str = None):
                     fallback_recent_check = False
 
         if matched_players:
-            logger.info(f"🟠 FLOW_TRACE [{request_id}]: Entering decision routing with {len(matched_players)} detected players")
-            log_resource_usage("Before Decision Routing", request_id)
-            
             # Handle multiple players
             if len(matched_players) > 1:
-                logger.info(f"🟠 FLOW_TRACE [{request_id}]: Multiple players detected, analyzing last names")
-                
-                # 🔧 FIXED: Proper decision logic for disambiguation vs multi-player blocking
-                
-                # 🔧 CRITICAL FIX: Use normalize_name() instead of .lower() for accent handling
                 last_names = set()
                 for player in matched_players:
                     last_name = normalize_name(player['name']).split()[-1]
@@ -546,26 +346,18 @@ async def ask_question(ctx, *, question: str = None):
                 log_info(f"DECISION LOGIC: Last names: {list(last_names)}")
                 
                 if len(last_names) == 1:
-                    # All players share same last name = ambiguous single player = DISAMBIGUATE
-                    logger.info(f"🟢 FLOW_TRACE [{request_id}]: Same last name detected → DISAMBIGUATION")
-                    log_info(f"DECISION LOGIC: Same last name detected → DISAMBIGUATION")
+                    # Same last name = ambiguous single player = DISAMBIGUATE
                     from selection_handlers import create_player_disambiguation_prompt
                     await create_player_disambiguation_prompt(ctx, question, matched_players)
-                    logger.info(f"✅ FLOW_TRACE [{request_id}]: Disambiguation prompt created successfully")
                     return
                 else:
                     # Multiple distinct last names = true multi-player question = BLOCK
-                    logger.info(f"🟢 FLOW_TRACE [{request_id}]: Multiple distinct last names → MULTI-PLAYER BLOCK")
-                    log_info(f"DECISION LOGIC: Multiple distinct last names → MULTI-PLAYER BLOCK")
                     await handle_multi_player_question(ctx, question, matched_players, question_map)
-                    logger.info(f"✅ FLOW_TRACE [{request_id}]: Multi-player block executed successfully")
                     return
-            
+
             # Handle single player
             else:
-                logger.info(f"🟢 FLOW_TRACE [{request_id}]: Single player detected, processing")
                 await handle_single_player_question(ctx, question, matched_players, question_map)
-                logger.info(f"✅ FLOW_TRACE [{request_id}]: Single player processing completed")
                 return
             
         elif fallback_recent_check:
@@ -583,31 +375,17 @@ async def ask_question(ctx, *, question: str = None):
                 return
 
         # All checks passed - post question
-        logger.info(f"🟢 FLOW_TRACE [{request_id}]: All checks passed, posting approved question")
-        log_resource_usage("Before Question Posting", request_id)
         await process_approved_question(ctx.channel, ctx.author, question, ctx.message, question_map)
-        logger.info(f"✅ FLOW_TRACE [{request_id}]: Question posted successfully")
-        
-        # Final completion logging
         duration = time.time() - start_time
-        logger.info(f"🆔 REQUEST_TRACE: Completed request {request_id} in {duration:.2f}s")
-        logger.info(f"✅ FLOW_TRACE [{request_id}]: Message processing complete")
-        log_resource_usage("After Processing Complete", request_id)
-        
+        logger.info(f"REQUEST {request_id} completed in {duration:.2f}s")
+
     except Exception as e:
-        # Exception handling with flow tracing
         duration = time.time() - start_time
-        logger.error(f"❌ FLOW_TRACE [{request_id}]: Exception occurred in message processing: {str(e)}")
-        logger.error(f"🆔 REQUEST_TRACE: Failed request {request_id} after {duration:.2f}s - {str(e)}")
-        log_memory_usage("Exception Occurred", request_id)
-        
-        # Re-raise the exception to maintain existing error handling
+        logger.error(f"REQUEST {request_id} failed after {duration:.2f}s: {str(e)}")
         raise
-        
+
     finally:
-        # Always remove user from processing set when done
         processing_users.discard(ctx.author.id)
-        logger.info(f"🧹 FLOW_TRACE [{request_id}]: Cleaned up processing user from set")
 
 # -------- REACTION HANDLER --------
 # -------- ENHANCED REACTION HANDLER WITH SAFEGUARDS --------
