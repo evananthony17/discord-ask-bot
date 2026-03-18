@@ -208,7 +208,7 @@ async def handle_disambiguation_selection(reaction, user, selected_player, selec
                     error_msg = await reaction.message.channel.send(
                         f"**{player_name}** was answered recently: {answer_url}"
                     )
-                        else:
+                else:
                     # Fallback to generic channel link
                     error_msg = await reaction.message.channel.send(
                         f"This player has been asked about recently. There is an answer here: {FINAL_ANSWER_LINK}"
