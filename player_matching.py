@@ -736,11 +736,8 @@ def simplified_fuzzy_match(text, max_results=8):
     
     matches = []
     text_normalized = normalize_name(text).lower()
-    
-    # Common name suffixes that should be handled specially
-    name_suffixes = ['jr', 'sr', 'ii', 'iii', 'iv', 'v']
-    
-    # Direct fuzzy matching against all players
+    name_suffixes = {'jr', 'sr', 'ii', 'iii', 'iv', 'v'}
+
     for player in players_data:
         player_name = normalize_name(player['name']).lower()
         
@@ -749,32 +746,16 @@ def simplified_fuzzy_match(text, max_results=8):
         best_similarity = similarity
         match_strategy = "direct"
         
-        # STRATEGY 2: Suffix-aware matching for multi-word queries
+        # STRATEGY 2: Suffix-aware matching — only when player name has a suffix
         if ' ' in text_normalized and ' ' in player_name:
-            # Check if player name has a suffix
             player_parts = player_name.split()
-            text_parts = text_normalized.split()
-            
-            # If player has a suffix, try matching without it
             if len(player_parts) > 2 and player_parts[-1] in name_suffixes:
                 player_base_name = ' '.join(player_parts[:-1])  # Remove suffix
                 base_similarity = SequenceMatcher(None, text_normalized, player_base_name).ratio()
-                
                 if base_similarity > best_similarity:
                     best_similarity = base_similarity
                     match_strategy = f"suffix_aware_removed_{player_parts[-1]}"
                     logger.info(f"🎯 SUFFIX_MATCH: '{text_normalized}' vs base '{player_base_name}' = {base_similarity:.3f}")
-            
-            # If query might be missing a suffix, try adding common ones
-            elif len(text_parts) >= 2:
-                for suffix in name_suffixes:
-                    text_with_suffix = f"{text_normalized} {suffix}"
-                    suffix_similarity = SequenceMatcher(None, text_with_suffix, player_name).ratio()
-                    
-                    if suffix_similarity > best_similarity:
-                        best_similarity = suffix_similarity
-                        match_strategy = f"suffix_aware_added_{suffix}"
-                        logger.info(f"🎯 SUFFIX_MATCH: '{text_with_suffix}' vs '{player_name}' = {suffix_similarity:.3f}")
         
         # STRATEGY 3: Individual name part comparison (for partial matches)
         if ' ' in player_name:
